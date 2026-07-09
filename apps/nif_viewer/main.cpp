@@ -71,6 +71,7 @@ struct Args {
     uint32_t exit_after_frames = 0;
     bool hidden = false;
     bool transparent_test_scene = false;
+    bool shadow_test_scene = false;
     bool bgfx_device_debug = false;
 };
 
@@ -220,6 +221,8 @@ Args parseArgs(int argc, char** argv) {
             args.hidden = true;
         } else if (arg == "--transparent-test-scene") {
             args.transparent_test_scene = true;
+        } else if (arg == "--shadow-test-scene") {
+            args.shadow_test_scene = true;
         } else if (arg == "--bgfx-device-debug") {
             args.bgfx_device_debug = true;
         } else if (args.nif_path.empty()) {
@@ -642,6 +645,81 @@ RenderWorld makeTransparentTestWorld() {
 
     world.meshes.push_back(makePane("Far Transparent Blue", 0.35f, color(0.15f, 0.45f, 1.0f, 0.55f)));
     world.meshes.push_back(makePane("Near Transparent Amber", -0.35f, color(1.0f, 0.55f, 0.12f, 0.55f)));
+    return world;
+}
+
+RenderWorld makeShadowTestWorld() {
+    RenderWorld world;
+    world.source_asset_path = "<shadow-test-scene>";
+    world.environment.ambient = {0.045f, 0.047f, 0.052f};
+    world.environment.sun.direction = lu::renderer::normalize(Vec3{0.82f, 0.42f, 0.34f});
+    world.environment.sun.position = world.environment.sun.direction;
+    world.environment.sun.color = {1.0f, 0.96f, 0.88f};
+    world.environment.sun.intensity = 1.25f;
+
+    auto material = [](const char* name, Vec3 diffuse) {
+        lu::renderer::MaterialAsset mat;
+        mat.name = name;
+        mat.shader_family = LegacyShaderFamily::BasicLit;
+        mat.diffuse = {diffuse.x, diffuse.y, diffuse.z, 1.0f};
+        mat.alpha_mode = RenderAlphaMode::Opaque;
+        mat.depth_write = true;
+        mat.cull_mode = RenderCullMode::Backface;
+        mat.lu_shader_uses_texture = false;
+        mat.lu_shader_uses_vertex_color = false;
+        mat.lu_shader_uses_material_diffuse = true;
+        mat.lu_shader_uses_lighting = true;
+        mat.lu_shader_uses_fog = false;
+        mat.lu_shader_uses_shadow_terrain = true;
+        mat.lu_shader_port_status = lu::renderer::ShaderPortStatus::Verified;
+        return mat;
+    };
+    auto vertex = [](Vec3 position, Vec3 normal, lu::renderer::Vec2 uv) {
+        Vertex v;
+        v.position = position;
+        v.normal = normal;
+        v.uv = uv;
+        v.uv2 = uv;
+        v.color_rgba8 = color(1, 1, 1);
+        return v;
+    };
+    auto addPlane = [&]() {
+        MeshAsset plane;
+        plane.name = "Shadow Receiver";
+        plane.material = material("Shadow Receiver", {0.62f, 0.64f, 0.60f});
+        plane.vertices = {
+            vertex({-5.0f, -1.0f, -4.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 1.0f}),
+            vertex({ 5.0f, -1.0f, -4.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 1.0f}),
+            vertex({ 5.0f, -1.0f,  4.0f}, {0.0f, 1.0f, 0.0f}, {1.0f, 0.0f}),
+            vertex({-5.0f, -1.0f,  4.0f}, {0.0f, 1.0f, 0.0f}, {0.0f, 0.0f})
+        };
+        plane.indices = {0, 2, 1, 0, 3, 2};
+        world.meshes.push_back(std::move(plane));
+    };
+    auto addBox = [&](const char* name, Vec3 min_v, Vec3 max_v, Vec3 diffuse) {
+        MeshAsset box;
+        box.name = name;
+        box.material = material(name, diffuse);
+        box.vertices = {
+            vertex({min_v.x,min_v.y,min_v.z}, { 0, 0,-1}, {0,1}), vertex({max_v.x,min_v.y,min_v.z}, { 0, 0,-1}, {1,1}), vertex({max_v.x,max_v.y,min_v.z}, { 0, 0,-1}, {1,0}), vertex({min_v.x,max_v.y,min_v.z}, { 0, 0,-1}, {0,0}),
+            vertex({min_v.x,min_v.y,max_v.z}, { 0, 0, 1}, {0,1}), vertex({max_v.x,min_v.y,max_v.z}, { 0, 0, 1}, {1,1}), vertex({max_v.x,max_v.y,max_v.z}, { 0, 0, 1}, {1,0}), vertex({min_v.x,max_v.y,max_v.z}, { 0, 0, 1}, {0,0}),
+            vertex({min_v.x,min_v.y,min_v.z}, {-1, 0, 0}, {0,1}), vertex({min_v.x,max_v.y,min_v.z}, {-1, 0, 0}, {1,1}), vertex({min_v.x,max_v.y,max_v.z}, {-1, 0, 0}, {1,0}), vertex({min_v.x,min_v.y,max_v.z}, {-1, 0, 0}, {0,0}),
+            vertex({max_v.x,min_v.y,min_v.z}, { 1, 0, 0}, {0,1}), vertex({max_v.x,max_v.y,min_v.z}, { 1, 0, 0}, {1,1}), vertex({max_v.x,max_v.y,max_v.z}, { 1, 0, 0}, {1,0}), vertex({max_v.x,min_v.y,max_v.z}, { 1, 0, 0}, {0,0}),
+            vertex({min_v.x,min_v.y,min_v.z}, { 0,-1, 0}, {0,1}), vertex({min_v.x,min_v.y,max_v.z}, { 0,-1, 0}, {1,1}), vertex({max_v.x,min_v.y,max_v.z}, { 0,-1, 0}, {1,0}), vertex({max_v.x,min_v.y,min_v.z}, { 0,-1, 0}, {0,0}),
+            vertex({min_v.x,max_v.y,min_v.z}, { 0, 1, 0}, {0,1}), vertex({min_v.x,max_v.y,max_v.z}, { 0, 1, 0}, {1,1}), vertex({max_v.x,max_v.y,max_v.z}, { 0, 1, 0}, {1,0}), vertex({max_v.x,max_v.y,min_v.z}, { 0, 1, 0}, {0,0})
+        };
+        box.indices = {
+            0,2,1, 0,3,2, 4,5,6, 4,6,7,
+            8,10,9, 8,11,10, 12,13,14, 12,14,15,
+            16,18,17, 16,19,18, 20,21,22, 20,22,23
+        };
+        world.meshes.push_back(std::move(box));
+    };
+
+    addPlane();
+    addBox("Near Shadow Caster", {-1.2f, -0.85f, -0.6f}, {-0.35f, 0.55f, 0.25f}, {0.86f, 0.48f, 0.32f});
+    addBox("Tall Shadow Caster", {0.45f, -0.85f, -0.45f}, {1.25f, 1.65f, 0.35f}, {0.34f, 0.55f, 0.86f});
+    addBox("Floating Shadow Bar", {-2.05f, 0.65f, -0.30f}, {-0.15f, 1.00f, 0.15f}, {0.28f, 0.70f, 0.48f});
     return world;
 }
 
@@ -1720,7 +1798,10 @@ int main(int argc, char** argv) {
     }
 
     RenderWorld world;
-    if (args.transparent_test_scene) {
+    if (args.shadow_test_scene) {
+        std::cout << "Showing synthetic shadow test scene.\n";
+        world = makeShadowTestWorld();
+    } else if (args.transparent_test_scene) {
         std::cout << "Showing synthetic transparent test scene.\n";
         world = makeTransparentTestWorld();
     } else if (!args.nif_path.empty()) {

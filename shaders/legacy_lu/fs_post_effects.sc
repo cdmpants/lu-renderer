@@ -179,46 +179,39 @@ vec3 sampleViewNormal(vec2 uv, vec3 centerPos)
     return normal.z < 0.0 ? -normal : normal;
 }
 
-float aoTap(vec2 sampleUv, vec3 centerPos, vec3 normal, float radius, float bias)
+float gtaoHorizonTap(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float stepScale, float jitter, float bias)
 {
+    float sampleRadius = pixelRadius * clamp(stepScale + jitter * 0.035, 0.02, 1.0);
+    vec2 sampleUv = uv + dir * sampleRadius * u_screenParams.zw;
     float sampleDepthRaw = sampleDepth(sampleUv);
     if (sampleDepthRaw >= 0.9999) return 0.0;
 
     vec3 samplePos = reconstructViewPos(sampleUv, linearizeDepth(sampleDepthRaw));
     vec3 delta = samplePos - centerPos;
     float dist = max(length(delta), 0.000001);
-    float normalTerm = max(dot(normal, delta / dist) - bias, 0.0);
-    float distanceFade = saturate(1.0 - dist / max(radius, 0.0001));
-    float depthFade = saturate(1.0 - abs(samplePos.z - centerPos.z) / max(radius * 2.0, 0.0001));
-    return normalTerm * distanceFade * distanceFade * depthFade;
+    float depthDelta = samplePos.z - centerPos.z;
+    float distanceFade = saturate(1.0 - dist / max(viewRadius, 0.0001));
+    float depthFade = saturate(1.0 - abs(depthDelta) / max(viewRadius * 1.65, 0.0001));
+    float thinDiscontinuityFade = saturate((depthDelta + viewRadius * 0.30) / max(viewRadius * 0.30, 0.0001));
+    float horizon = max(dot(normal, delta / dist) - bias, 0.0);
+    return horizon * distanceFade * distanceFade * depthFade * thinDiscontinuityFade;
 }
 
-float gtaoDirection(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float bias)
+float gtaoSliceOcclusion(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float jitter, float bias)
 {
-    float occ = 0.0;
-    float weight = 0.0;
+    float side0 = 0.0;
+    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.08, jitter, bias));
+    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.22, jitter, bias));
+    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.48, jitter, bias));
+    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.85, jitter, bias));
 
-    float stepWeight = 1.0;
-    vec2 sampleUv = uv + dir * (pixelRadius * 0.25) * u_screenParams.zw;
-    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
-    weight += stepWeight;
+    float side1 = 0.0;
+    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.08, jitter, bias));
+    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.22, jitter, bias));
+    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.48, jitter, bias));
+    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.85, jitter, bias));
 
-    stepWeight = 0.85;
-    sampleUv = uv + dir * (pixelRadius * 0.50) * u_screenParams.zw;
-    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
-    weight += stepWeight;
-
-    stepWeight = 0.65;
-    sampleUv = uv + dir * (pixelRadius * 0.75) * u_screenParams.zw;
-    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
-    weight += stepWeight;
-
-    stepWeight = 0.45;
-    sampleUv = uv + dir * pixelRadius * u_screenParams.zw;
-    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
-    weight += stepWeight;
-
-    return occ / max(weight, 0.0001);
+    return (side0 + side1) * 0.5;
 }
 
 float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
@@ -233,8 +226,9 @@ float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
     float projectedRadiusX = viewRadius / max(centerDepth * u_depthParams.z, 0.0001) * u_screenParams.x * 0.5;
     float projectedRadiusY = viewRadius / max(centerDepth * u_depthParams.w, 0.0001) * u_screenParams.y * 0.5;
     float pixelRadius = clamp(min(projectedRadiusX, projectedRadiusY), 2.0, 96.0);
-    float bias = 0.08;
-    float angle = hash12(pixel) * 6.2831853;
+    float bias = 0.10;
+    float noise = hash12(pixel + vec2_splat(u_temporalParams.w * 0.37));
+    float angle = noise * 6.2831853;
     vec2 rot = vec2(cos(angle), sin(angle));
     vec2 d0 = rot;
     vec2 d1 = vec2(-rot.y, rot.x);
@@ -242,16 +236,12 @@ float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
     vec2 d3 = normalize(d0 - d1);
 
     float occ = 0.0;
-    occ += gtaoDirection(uv, centerPos, normal,  d0, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal, -d0, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal,  d1, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal, -d1, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal,  d2, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal, -d2, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal,  d3, pixelRadius, viewRadius, bias);
-    occ += gtaoDirection(uv, centerPos, normal, -d3, pixelRadius, viewRadius, bias);
+    occ += gtaoSliceOcclusion(uv, centerPos, normal, d0, pixelRadius, viewRadius, noise, bias);
+    occ += gtaoSliceOcclusion(uv, centerPos, normal, d1, pixelRadius, viewRadius, noise, bias);
+    occ += gtaoSliceOcclusion(uv, centerPos, normal, d2, pixelRadius, viewRadius, noise, bias);
+    occ += gtaoSliceOcclusion(uv, centerPos, normal, d3, pixelRadius, viewRadius, noise, bias);
 
-    occ = saturate(occ * 0.85);
+    occ = saturate(occ * 0.55);
     float visibility = pow(saturate(1.0 - occ), max(intensity, 0.01));
     return clamp(visibility, 0.0, 1.0);
 }
