@@ -60,7 +60,7 @@ vec3 pbrFresnelSchlick(float cosTheta, vec3 f0)
     return f0 + (vec3_splat(1.0) - f0) * pow(1.0 - cosTheta, 5.0);
 }
 
-vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflectVector, vec3 diffuseLight, vec3 worldPos, float reflectionScale)
+vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflectVector, vec3 legacyDiffuse, vec3 worldPos, float reflectionScale)
 {
     float roughness = clamp(u_luPbrParams.y, 0.04, 1.0);
     float metallic = clamp(u_luPbrParams.z, 0.0, 1.0);
@@ -77,15 +77,17 @@ vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflec
     float distribution = pbrDistributionGgx(ndoth, roughness);
     float geometry = pbrGeometrySchlickGgx(ndotv, roughness) * pbrGeometrySchlickGgx(ndotl, roughness);
     vec3 specular = (distribution * geometry * fresnel) / max(0.001, 4.0 * ndotv * ndotl);
-    vec3 diffuse = (vec3_splat(1.0) - fresnel) * (1.0 - metallic) * baseColor;
+    // LU's vertex lighting deliberately keeps the fill light independent from
+    // untextured material color. Preserve that authored response here; applying
+    // baseColor again makes its dark plastic pieces nearly black in PBR mode.
+    vec3 diffuse = (vec3_splat(1.0) - fresnel) * (1.0 - metallic) * legacyDiffuse;
     vec3 directSpecular = specular * u_luLightColorShadow.rgb * ndotl;
 
     vec3 reflectDir = vec3(reflectVector.x, -reflectVector.y, reflectVector.z);
     vec3 envColor = textureCube(s_luEnv, reflectDir).rgb;
     vec3 envFresnel = pbrFresnelSchlick(ndotv, f0);
     vec3 envSpecular = envColor * envFresnel * reflectionScale * u_luReflectionParams.y * specularIntensity * mix(1.0, 0.35, roughness);
-    vec3 luDiffuse = diffuse * diffuseLight;
-    return (luDiffuse + directSpecular + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
+    return (diffuse + directSpecular + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
 }
 
 float isVariant(float variant)
@@ -114,7 +116,8 @@ void main()
     vec3 texturedBase = reflColor.rgb + specular.rgb + ((v_diffuse.rgb + fres) * color.rgb);
     vec3 litColor = (baseColor * (1.0 - u_luShaderFlags.x)) + (texturedBase * u_luShaderFlags.x);
     litColor *= u_luLightColorShadow.a * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
-    litColor = mix(litColor, calculatePbrColor(color.rgb, normal, viewVector, v_reflectVector, v_diffuse.rgb, v_worldPos.xyz, reflectionEnabled), u_luPbrParams.x);
+    vec3 pbrDiffuse = mix(v_diffuse.rgb, v_diffuse.rgb * color.rgb, u_luShaderFlags.x);
+    litColor = mix(litColor, calculatePbrColor(color.rgb, normal, viewVector, v_reflectVector, pbrDiffuse, v_worldPos.xyz, reflectionEnabled), u_luPbrParams.x);
 
     float emissiveAmount = u_materialEmissive.r * mix(1.0, v_color0.a, u_luShaderFlags.y);
     float superEmissive = isVariant(LEGOPP_VARIANT_SUPEREMISSIVE);
