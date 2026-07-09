@@ -146,10 +146,10 @@ struct PostProcessSettings {
     float color_lut_intensity = 1.0f;
     std::string color_lut_path;
     bool bloom_enabled = false;
-    float bloom_threshold = 0.85f;
-    float bloom_intensity = 0.35f;
+    float bloom_threshold = 1.0f;
+    float bloom_intensity = 0.15f;
     bool dof_enabled = false;
-    float dof_focus_distance = 15.0f;
+    float dof_focus_distance = 9.091f;
     float dof_aperture = 0.15f;
     bool film_grain_enabled = false;
     float film_grain_strength = 0.025f;
@@ -157,12 +157,12 @@ struct PostProcessSettings {
 
 struct ScreenSpaceSettings {
     bool ssr_enabled = false;
-    float ssr_strength = 0.5f;
+    float ssr_strength = 1.0f;
     float ssr_max_distance = 40.0f;
     float ssr_thickness = 0.025f;
     bool gtao_enabled = false;
-    float gtao_radius = 1.5f;
-    float gtao_intensity = 1.0f;
+    float gtao_radius = 3.0f;
+    float gtao_intensity = 0.35f;
 };
 
 struct ShadowSettings {
