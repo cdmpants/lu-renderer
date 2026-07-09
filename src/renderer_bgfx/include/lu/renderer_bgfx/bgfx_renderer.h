@@ -101,6 +101,14 @@ private:
     bool ensureReflectionMaskTarget();
     void destroyBloomMaskTarget();
     bool ensureBloomMaskTarget();
+    void destroyGtaoTargets();
+    bool ensureGtaoTargets();
+    bgfx::TextureHandle buildGtaoTexture(
+        float effect_time,
+        float near_clip,
+        float far_clip,
+        float tan_half_fov_x,
+        float tan_half_fov_y);
     void destroyBloomChain();
     bool ensureBloomChain();
     bgfx::TextureHandle buildBloomPyramid();
@@ -114,7 +122,8 @@ private:
         float far_clip,
         float tan_half_fov_x,
         float tan_half_fov_y,
-        bgfx::TextureHandle bloom_texture);
+        bgfx::TextureHandle bloom_texture,
+        bgfx::TextureHandle gtao_texture);
     void drawFullscreenCopy(bgfx::TextureHandle texture);
 
     std::filesystem::path shader_dir_;
@@ -145,6 +154,8 @@ private:
     bgfx::ProgramHandle shadow_depth_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle post_process_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle bloom_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle gtao_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle gtao_denoise_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle fullscreen_copy_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle reflection_mask_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle view_normal_program_ = BGFX_INVALID_HANDLE;
@@ -157,6 +168,7 @@ private:
     bgfx::UniformHandle s_history_color_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_reflection_mask_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_bloom_mask_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_gtao_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_color_lut_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_shadow_map_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadow_matrix_ = BGFX_INVALID_HANDLE;
@@ -249,6 +261,12 @@ private:
     bgfx::FrameBufferHandle bloom_mask_framebuffer_ = BGFX_INVALID_HANDLE;
     uint32_t bloom_mask_target_width_ = 0;
     uint32_t bloom_mask_target_height_ = 0;
+    bgfx::TextureHandle gtao_raw_texture_ = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle gtao_raw_framebuffer_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle gtao_denoised_texture_ = BGFX_INVALID_HANDLE;
+    bgfx::FrameBufferHandle gtao_denoised_framebuffer_ = BGFX_INVALID_HANDLE;
+    uint32_t gtao_target_width_ = 0;
+    uint32_t gtao_target_height_ = 0;
     std::array<bgfx::TextureHandle, kBloomMipCount> bloom_textures_{};
     std::array<bgfx::FrameBufferHandle, kBloomMipCount> bloom_framebuffers_{};
     std::array<uint16_t, kBloomMipCount> bloom_widths_{};

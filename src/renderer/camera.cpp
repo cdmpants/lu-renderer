@@ -22,8 +22,8 @@ void OrbitCamera::orbit(float dx, float dy) {
 void OrbitCamera::pan(float dx, float dy) {
     Vec3 eye = position();
     Vec3 forward = normalize(target_ - eye);
-    Vec3 right = normalize(cross(forward, {0.0f, 1.0f, 0.0f}));
-    Vec3 up = normalize(cross(right, forward));
+    Vec3 right = normalize(cross({0.0f, 1.0f, 0.0f}, forward));
+    Vec3 up = normalize(cross(forward, right));
     float scale = distance_ * 0.0015f;
     target_ = target_ + right * (-dx * scale) + up * (-dy * scale);
 }
@@ -76,11 +76,11 @@ Vec3 OrbitCamera::forward() const {
 }
 
 Vec3 OrbitCamera::right() const {
-    return normalize(cross(forward(), {0.0f, 1.0f, 0.0f}));
+    return normalize(cross({0.0f, 1.0f, 0.0f}, forward()));
 }
 
 Vec3 OrbitCamera::up() const {
-    return normalize(cross(right(), forward()));
+    return normalize(cross(forward(), right()));
 }
 
 Mat4 OrbitCamera::viewMatrix() const {

@@ -42,6 +42,7 @@
 #include <limits>
 #include <cmath>
 #include <string>
+#include <vector>
 
 using lu::renderer::MeshAsset;
 using lu::renderer::AnimationAsset;
@@ -527,6 +528,105 @@ void printShaderDiagnostics(const RenderWorld& world) {
     }
 }
 
+void printMeshOrientationDiagnostics(const RenderWorld& world) {
+    size_t total_triangles = 0;
+    size_t aligned_triangles = 0;
+    size_t opposed_triangles = 0;
+    size_t degenerate_triangles = 0;
+    float dot_sum = 0.0f;
+
+    struct SuspiciousMesh {
+        std::string name;
+        size_t aligned = 0;
+        size_t opposed = 0;
+        size_t degenerate = 0;
+        float average_dot = 0.0f;
+    };
+    std::vector<SuspiciousMesh> suspicious;
+
+    for (const auto& mesh : world.meshes) {
+        size_t mesh_triangles = 0;
+        size_t mesh_aligned = 0;
+        size_t mesh_opposed = 0;
+        size_t mesh_degenerate = 0;
+        float mesh_dot_sum = 0.0f;
+
+        for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+            const uint32_t i0 = mesh.indices[i + 0];
+            const uint32_t i1 = mesh.indices[i + 1];
+            const uint32_t i2 = mesh.indices[i + 2];
+            if (i0 >= mesh.vertices.size() || i1 >= mesh.vertices.size() || i2 >= mesh.vertices.size()) {
+                ++mesh_degenerate;
+                continue;
+            }
+
+            const auto& v0 = mesh.vertices[i0];
+            const auto& v1 = mesh.vertices[i1];
+            const auto& v2 = mesh.vertices[i2];
+            const Vec3 e1 = v1.position - v0.position;
+            const Vec3 e2 = v2.position - v0.position;
+            const Vec3 face_normal = lu::renderer::normalize(lu::renderer::cross(e1, e2));
+            const Vec3 vertex_normal = lu::renderer::normalize(v0.normal + v1.normal + v2.normal);
+            const float d = lu::renderer::dot(face_normal, vertex_normal);
+            if (std::abs(d) < 0.001f) {
+                ++mesh_degenerate;
+                continue;
+            }
+
+            ++mesh_triangles;
+            mesh_dot_sum += d;
+            if (d >= 0.0f) {
+                ++mesh_aligned;
+            } else {
+                ++mesh_opposed;
+            }
+        }
+
+        if (mesh_triangles > 0) {
+            total_triangles += mesh_triangles;
+            aligned_triangles += mesh_aligned;
+            opposed_triangles += mesh_opposed;
+            degenerate_triangles += mesh_degenerate;
+            dot_sum += mesh_dot_sum;
+
+            const float opposed_ratio = static_cast<float>(mesh_opposed) / static_cast<float>(mesh_triangles);
+            if (opposed_ratio > 0.20f && suspicious.size() < 8) {
+                suspicious.push_back({
+                    mesh.name,
+                    mesh_aligned,
+                    mesh_opposed,
+                    mesh_degenerate,
+                    mesh_dot_sum / static_cast<float>(mesh_triangles)
+                });
+            }
+        } else {
+            degenerate_triangles += mesh_degenerate;
+        }
+    }
+
+    if (total_triangles == 0) return;
+
+    const float aligned_pct = 100.0f * static_cast<float>(aligned_triangles) / static_cast<float>(total_triangles);
+    const float opposed_pct = 100.0f * static_cast<float>(opposed_triangles) / static_cast<float>(total_triangles);
+    std::cout
+        << "Mesh orientation: triangles=" << total_triangles
+        << " aligned=" << aligned_triangles << " (" << aligned_pct << "%)"
+        << " opposed=" << opposed_triangles << " (" << opposed_pct << "%)"
+        << " degenerate=" << degenerate_triangles
+        << " avgDot=" << (dot_sum / static_cast<float>(total_triangles))
+        << "\n";
+
+    for (const auto& mesh : suspicious) {
+        std::cout
+            << "  orientation warning: " << mesh.name
+            << " aligned=" << mesh.aligned
+            << " opposed=" << mesh.opposed
+            << " degenerate=" << mesh.degenerate
+            << " avgDot=" << mesh.average_dot
+            << "\n";
+    }
+}
+
 void printAnimationDiagnostics(const RenderWorld& world) {
     const auto& animation = world.animation;
     if (animation.source_path.empty()) return;
@@ -789,6 +889,7 @@ bool loadNifWorld(const std::filesystem::path& nif_path, Args& args, RenderWorld
     args.nif_path = nif_path;
     std::cout << "Loaded " << world.meshes.size() << " mesh(es) from " << nif_path << "\n";
     printShaderDiagnostics(world);
+    printMeshOrientationDiagnostics(world);
     return true;
 }
 

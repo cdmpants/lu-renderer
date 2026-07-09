@@ -26,11 +26,13 @@ constexpr bgfx::ViewId kViewWorld = 7;
 constexpr bgfx::ViewId kViewSceneNormal = 8;
 constexpr bgfx::ViewId kViewReflectionMask = 9;
 constexpr bgfx::ViewId kViewBloomMask = 10;
-constexpr bgfx::ViewId kViewBloomExtract = 11;
-constexpr bgfx::ViewId kViewBloomDownFirst = 12;
-constexpr bgfx::ViewId kViewBloomUpFirst = 18;
-constexpr bgfx::ViewId kViewPost = 24;
-constexpr bgfx::ViewId kViewTemporalPost = 25;
+constexpr bgfx::ViewId kViewGtaoRaw = 11;
+constexpr bgfx::ViewId kViewGtaoDenoise = 12;
+constexpr bgfx::ViewId kViewBloomExtract = 13;
+constexpr bgfx::ViewId kViewBloomDownFirst = 14;
+constexpr bgfx::ViewId kViewBloomUpFirst = 20;
+constexpr bgfx::ViewId kViewPost = 26;
+constexpr bgfx::ViewId kViewTemporalPost = 27;
 constexpr uint16_t kShadowMapSize = 2048;
 constexpr uint16_t kGlobalProbeSize = 128;
 constexpr uint32_t kDdsCaps2Cubemap = 0x00000200u;
@@ -551,6 +553,10 @@ bool BgfxRenderer::init(const RendererInit& init) {
     bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
     bgfx::setViewClear(kViewBloomMask, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
     bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+    bgfx::setViewClear(kViewGtaoRaw, BGFX_CLEAR_COLOR, 0xffffffff, 1.0f, 0);
+    bgfx::setViewRect(kViewGtaoRaw, 0, 0, width_, height_);
+    bgfx::setViewClear(kViewGtaoDenoise, BGFX_CLEAR_COLOR, 0xffffffff, 1.0f, 0);
+    bgfx::setViewRect(kViewGtaoDenoise, 0, 0, width_, height_);
     for (size_t i = 0; i < kBloomMipCount; ++i) {
         const bgfx::ViewId down_view = i == 0
             ? kViewBloomExtract
@@ -582,6 +588,7 @@ bool BgfxRenderer::init(const RendererInit& init) {
     s_history_color_ = bgfx::createUniform("s_historyColor", bgfx::UniformType::Sampler);
     s_reflection_mask_ = bgfx::createUniform("s_reflectionMask", bgfx::UniformType::Sampler);
     s_bloom_mask_ = bgfx::createUniform("s_bloomMask", bgfx::UniformType::Sampler);
+    s_gtao_ = bgfx::createUniform("s_gtao", bgfx::UniformType::Sampler);
     s_color_lut_ = bgfx::createUniform("s_colorLut", bgfx::UniformType::Sampler);
     s_shadow_map_ = bgfx::createUniform("s_shadowMap", bgfx::UniformType::Sampler);
     u_shadow_matrix_ = bgfx::createUniform("u_shadowMatrix", bgfx::UniformType::Mat4);
@@ -664,6 +671,8 @@ bool BgfxRenderer::init(const RendererInit& init) {
     clear_plastic_program_ = loadProgram("vs_lu_lit_mesh.sc.bin", "fs_clear_plastic.sc.bin");
     shadow_depth_program_ = loadProgram("vs_shadow_depth.sc.bin", "fs_shadow_depth.sc.bin");
     bloom_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_bloom.sc.bin");
+    gtao_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_gtao.sc.bin");
+    gtao_denoise_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_gtao_denoise.sc.bin");
     post_process_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_post_effects.sc.bin");
     fullscreen_copy_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_fullscreen_copy.sc.bin");
     reflection_mask_program_ = loadProgram("vs_reflection_mask.sc.bin", "fs_reflection_mask.sc.bin");
@@ -688,6 +697,8 @@ bool BgfxRenderer::init(const RendererInit& init) {
         !bgfx::isValid(clear_plastic_program_) ||
         !bgfx::isValid(shadow_depth_program_) ||
         !bgfx::isValid(bloom_program_) ||
+        !bgfx::isValid(gtao_program_) ||
+        !bgfx::isValid(gtao_denoise_program_) ||
         !bgfx::isValid(post_process_program_) ||
         !bgfx::isValid(fullscreen_copy_program_) ||
         !bgfx::isValid(reflection_mask_program_) ||
@@ -711,6 +722,7 @@ void BgfxRenderer::shutdown() {
     destroyTemporalHistoryTargets();
     destroyReflectionMaskTarget();
     destroyBloomMaskTarget();
+    destroyGtaoTargets();
     destroyBloomChain();
     destroyTextureCache();
     for (auto& [_, handle] : cube_texture_cache_) {
@@ -743,6 +755,8 @@ void BgfxRenderer::shutdown() {
     if (bgfx::isValid(clear_plastic_program_)) bgfx::destroy(clear_plastic_program_);
     if (bgfx::isValid(shadow_depth_program_)) bgfx::destroy(shadow_depth_program_);
     if (bgfx::isValid(bloom_program_)) bgfx::destroy(bloom_program_);
+    if (bgfx::isValid(gtao_program_)) bgfx::destroy(gtao_program_);
+    if (bgfx::isValid(gtao_denoise_program_)) bgfx::destroy(gtao_denoise_program_);
     if (bgfx::isValid(post_process_program_)) bgfx::destroy(post_process_program_);
     if (bgfx::isValid(fullscreen_copy_program_)) bgfx::destroy(fullscreen_copy_program_);
     if (bgfx::isValid(reflection_mask_program_)) bgfx::destroy(reflection_mask_program_);
@@ -756,6 +770,7 @@ void BgfxRenderer::shutdown() {
     if (bgfx::isValid(s_history_color_)) bgfx::destroy(s_history_color_);
     if (bgfx::isValid(s_reflection_mask_)) bgfx::destroy(s_reflection_mask_);
     if (bgfx::isValid(s_bloom_mask_)) bgfx::destroy(s_bloom_mask_);
+    if (bgfx::isValid(s_gtao_)) bgfx::destroy(s_gtao_);
     if (bgfx::isValid(s_color_lut_)) bgfx::destroy(s_color_lut_);
     if (bgfx::isValid(s_shadow_map_)) bgfx::destroy(s_shadow_map_);
     if (bgfx::isValid(u_shadow_matrix_)) bgfx::destroy(u_shadow_matrix_);
@@ -814,6 +829,8 @@ void BgfxRenderer::resize(uint32_t width, uint32_t height) {
     bgfx::setViewRect(kViewSceneNormal, 0, 0, width_, height_);
     bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
     bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+    bgfx::setViewRect(kViewGtaoRaw, 0, 0, width_, height_);
+    bgfx::setViewRect(kViewGtaoDenoise, 0, 0, width_, height_);
     for (size_t i = 0; i < kBloomMipCount; ++i) {
         const bgfx::ViewId down_view = i == 0
             ? kViewBloomExtract
@@ -834,6 +851,7 @@ void BgfxRenderer::resize(uint32_t width, uint32_t height) {
     destroyTemporalHistoryTargets();
     destroyReflectionMaskTarget();
     destroyBloomMaskTarget();
+    destroyGtaoTargets();
     destroyBloomChain();
     global_probe_capture_dirty_ = true;
 }
@@ -982,6 +1000,8 @@ void BgfxRenderer::setFeatureSettings(const RenderFeatureSettings& features) {
         bgfx::setViewRect(kViewSceneNormal, 0, 0, width_, height_);
         bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
         bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+        bgfx::setViewRect(kViewGtaoRaw, 0, 0, width_, height_);
+        bgfx::setViewRect(kViewGtaoDenoise, 0, 0, width_, height_);
         for (size_t i = 0; i < kBloomMipCount; ++i) {
             const bgfx::ViewId down_view = i == 0
                 ? kViewBloomExtract
@@ -1002,6 +1022,7 @@ void BgfxRenderer::setFeatureSettings(const RenderFeatureSettings& features) {
         destroyTemporalHistoryTargets();
         destroyReflectionMaskTarget();
         destroyBloomMaskTarget();
+        destroyGtaoTargets();
         destroyBloomChain();
         global_probe_capture_dirty_ = true;
     }
@@ -1094,6 +1115,8 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
     } else {
         bgfx::setViewFrameBuffer(kViewBloomMask, BGFX_INVALID_HANDLE);
     }
+    bgfx::setViewFrameBuffer(kViewGtaoRaw, BGFX_INVALID_HANDLE);
+    bgfx::setViewFrameBuffer(kViewGtaoDenoise, BGFX_INVALID_HANDLE);
     if (directional_shadows_enabled) {
         bgfx::setViewFrameBuffer(kViewShadow, shadow_framebuffer_);
     } else {
@@ -1552,7 +1575,11 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bloom_texture = buildBloomPyramid();
         }
         const float tan_half_fov_y = std::tan((kVerticalFovDegrees * 3.14159265358979323846f / 180.0f) * 0.5f);
-        drawPostProcess(effect_time, near_clip, far_clip, tan_half_fov_y * aspect, tan_half_fov_y, bloom_texture);
+        bgfx::TextureHandle gtao_texture = BGFX_INVALID_HANDLE;
+        if (features_.screen_space.gtao_enabled && features_.screen_space.gtao_intensity > 0.0f) {
+            gtao_texture = buildGtaoTexture(effect_time, near_clip, far_clip, tan_half_fov_y * aspect, tan_half_fov_y);
+        }
+        drawPostProcess(effect_time, near_clip, far_clip, tan_half_fov_y * aspect, tan_half_fov_y, bloom_texture, gtao_texture);
     }
 
     bgfx::dbgTextClear();
@@ -2561,6 +2588,156 @@ bool BgfxRenderer::ensureBloomMaskTarget() {
     return true;
 }
 
+void BgfxRenderer::destroyGtaoTargets() {
+    if (bgfx::isValid(gtao_raw_framebuffer_)) {
+        bgfx::destroy(gtao_raw_framebuffer_);
+    } else if (bgfx::isValid(gtao_raw_texture_)) {
+        bgfx::destroy(gtao_raw_texture_);
+    }
+    if (bgfx::isValid(gtao_denoised_framebuffer_)) {
+        bgfx::destroy(gtao_denoised_framebuffer_);
+    } else if (bgfx::isValid(gtao_denoised_texture_)) {
+        bgfx::destroy(gtao_denoised_texture_);
+    }
+    gtao_raw_framebuffer_ = BGFX_INVALID_HANDLE;
+    gtao_raw_texture_ = BGFX_INVALID_HANDLE;
+    gtao_denoised_framebuffer_ = BGFX_INVALID_HANDLE;
+    gtao_denoised_texture_ = BGFX_INVALID_HANDLE;
+    gtao_target_width_ = 0;
+    gtao_target_height_ = 0;
+}
+
+bool BgfxRenderer::ensureGtaoTargets() {
+    if (width_ == 0 || height_ == 0) return false;
+    if (bgfx::isValid(gtao_raw_framebuffer_) &&
+        bgfx::isValid(gtao_denoised_framebuffer_) &&
+        gtao_target_width_ == width_ &&
+        gtao_target_height_ == height_) {
+        return true;
+    }
+
+    destroyGtaoTargets();
+
+    const uint64_t target_flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    gtao_raw_texture_ = bgfx::createTexture2D(
+        static_cast<uint16_t>(width_),
+        static_cast<uint16_t>(height_),
+        false,
+        1,
+        bgfx::TextureFormat::R8,
+        target_flags);
+    gtao_denoised_texture_ = bgfx::createTexture2D(
+        static_cast<uint16_t>(width_),
+        static_cast<uint16_t>(height_),
+        false,
+        1,
+        bgfx::TextureFormat::R8,
+        target_flags);
+
+    if (!bgfx::isValid(gtao_raw_texture_) || !bgfx::isValid(gtao_denoised_texture_)) {
+        destroyGtaoTargets();
+        return false;
+    }
+
+    gtao_raw_framebuffer_ = bgfx::createFrameBuffer(1, &gtao_raw_texture_, true);
+    gtao_denoised_framebuffer_ = bgfx::createFrameBuffer(1, &gtao_denoised_texture_, true);
+    if (!bgfx::isValid(gtao_raw_framebuffer_) || !bgfx::isValid(gtao_denoised_framebuffer_)) {
+        destroyGtaoTargets();
+        return false;
+    }
+
+    gtao_target_width_ = width_;
+    gtao_target_height_ = height_;
+    return true;
+}
+
+bgfx::TextureHandle BgfxRenderer::buildGtaoTexture(
+    float effect_time,
+    float near_clip,
+    float far_clip,
+    float tan_half_fov_x,
+    float tan_half_fov_y) {
+    if (!bgfx::isValid(gtao_program_) ||
+        !bgfx::isValid(gtao_denoise_program_) ||
+        !bgfx::isValid(scene_normal_framebuffer_) ||
+        !ensureGtaoTargets()) {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    const bgfx::TextureHandle scene_depth = bgfx::getTexture(scene_normal_framebuffer_, 1);
+    const bgfx::TextureHandle scene_normal = bgfx::getTexture(scene_normal_framebuffer_, 0);
+    if (!bgfx::isValid(scene_depth) || !bgfx::isValid(scene_normal)) return BGFX_INVALID_HANDLE;
+
+    const float screen_params[4] = {
+        static_cast<float>(std::max<uint32_t>(width_, 1)),
+        static_cast<float>(std::max<uint32_t>(height_, 1)),
+        1.0f / static_cast<float>(std::max<uint32_t>(width_, 1)),
+        1.0f / static_cast<float>(std::max<uint32_t>(height_, 1))
+    };
+    const float screen_space_params[4] = {
+        features_.screen_space.gtao_enabled ? std::max(0.0f, features_.screen_space.gtao_intensity) : 0.0f,
+        std::max(0.1f, features_.screen_space.gtao_radius),
+        std::max(0.1f, features_.screen_space.ssr_max_distance),
+        features_.screen_space.ssr_enabled ? std::max(0.0f, features_.screen_space.ssr_strength) : 0.0f
+    };
+    const float depth_linearize_mul = (far_clip * near_clip) / std::max(0.0001f, far_clip - near_clip);
+    const float depth_linearize_add = far_clip / std::max(0.0001f, far_clip - near_clip);
+    const float depth_params[4] = {
+        depth_linearize_mul,
+        depth_linearize_add,
+        tan_half_fov_x,
+        tan_half_fov_y
+    };
+    const float temporal_params[4] = {
+        0.0f,
+        0.0f,
+        0.0f,
+        static_cast<float>(frame_index_ & 1023u) + effect_time * 0.0f
+    };
+
+    bgfx::TransientVertexBuffer tvb;
+    constexpr uint32_t vertex_count = 3;
+    if (bgfx::getAvailTransientVertexBuffer(vertex_count, PostVertex::layout) < vertex_count) return BGFX_INVALID_HANDLE;
+    bgfx::allocTransientVertexBuffer(&tvb, vertex_count, PostVertex::layout);
+    auto* verts = reinterpret_cast<PostVertex*>(tvb.data);
+    verts[0] = {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f};
+    verts[1] = { 3.0f, -1.0f, 0.0f, 2.0f, 1.0f};
+    verts[2] = {-1.0f,  3.0f, 0.0f, 0.0f,-1.0f};
+
+    bgfx::setViewFrameBuffer(kViewGtaoRaw, gtao_raw_framebuffer_);
+    bgfx::setViewRect(kViewGtaoRaw, 0, 0, width_, height_);
+    bgfx::touch(kViewGtaoRaw);
+    bgfx::setVertexBuffer(0, &tvb);
+    bgfx::setTexture(0, s_scene_depth_, scene_depth);
+    bgfx::setTexture(1, s_scene_normal_, scene_normal);
+    bgfx::setUniform(u_screen_params_, screen_params);
+    bgfx::setUniform(u_screen_space_params_, screen_space_params);
+    bgfx::setUniform(u_depth_params_, depth_params);
+    bgfx::setUniform(u_temporal_params_, temporal_params);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(kViewGtaoRaw, gtao_program_);
+
+    if (bgfx::getAvailTransientVertexBuffer(vertex_count, PostVertex::layout) < vertex_count) return gtao_raw_texture_;
+    bgfx::allocTransientVertexBuffer(&tvb, vertex_count, PostVertex::layout);
+    verts = reinterpret_cast<PostVertex*>(tvb.data);
+    verts[0] = {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f};
+    verts[1] = { 3.0f, -1.0f, 0.0f, 2.0f, 1.0f};
+    verts[2] = {-1.0f,  3.0f, 0.0f, 0.0f,-1.0f};
+
+    bgfx::setViewFrameBuffer(kViewGtaoDenoise, gtao_denoised_framebuffer_);
+    bgfx::setViewRect(kViewGtaoDenoise, 0, 0, width_, height_);
+    bgfx::touch(kViewGtaoDenoise);
+    bgfx::setVertexBuffer(0, &tvb);
+    bgfx::setTexture(0, s_gtao_, gtao_raw_texture_);
+    bgfx::setTexture(1, s_scene_depth_, scene_depth);
+    bgfx::setUniform(u_screen_params_, screen_params);
+    bgfx::setUniform(u_depth_params_, depth_params);
+    bgfx::setState(BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A);
+    bgfx::submit(kViewGtaoDenoise, gtao_denoise_program_);
+
+    return gtao_denoised_texture_;
+}
+
 void BgfxRenderer::destroyBloomChain() {
     for (auto& framebuffer : bloom_framebuffers_) {
         if (bgfx::isValid(framebuffer)) {
@@ -2752,7 +2929,8 @@ void BgfxRenderer::drawPostProcess(
     float far_clip,
     float tan_half_fov_x,
     float tan_half_fov_y,
-    bgfx::TextureHandle bloom_texture) {
+    bgfx::TextureHandle bloom_texture,
+    bgfx::TextureHandle gtao_texture) {
     if (!bgfx::isValid(post_process_program_) || !bgfx::isValid(scene_framebuffer_)) return;
     const bgfx::TextureHandle scene_color = bgfx::getTexture(scene_framebuffer_, 0);
     const bgfx::TextureHandle scene_depth = bgfx::getTexture(scene_framebuffer_, 1);
@@ -2868,6 +3046,7 @@ void BgfxRenderer::drawPostProcess(
     bgfx::setTexture(4, s_bloom_mask_, bgfx::isValid(bloom_texture) ? bloom_texture : black_texture_);
     bgfx::setTexture(5, s_scene_normal_, bgfx::isValid(scene_normal) ? scene_normal : flat_normal_texture_);
     bgfx::setTexture(6, s_history_color_, bgfx::isValid(history_read) ? history_read : scene_color);
+    bgfx::setTexture(7, s_gtao_, bgfx::isValid(gtao_texture) ? gtao_texture : white_texture_);
     bgfx::setUniform(u_post_params_, post_params);
     bgfx::setUniform(u_bloom_params_, bloom_params);
     bgfx::setUniform(u_dof_params_, dof_params);

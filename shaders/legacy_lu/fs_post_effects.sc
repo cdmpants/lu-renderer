@@ -9,6 +9,7 @@ SAMPLER2D(s_colorLut, 3);
 SAMPLER2D(s_bloomMask, 4);
 SAMPLER2D(s_sceneNormal, 5);
 SAMPLER2D(s_historyColor, 6);
+SAMPLER2D(s_gtao, 7);
 
 uniform vec4 u_postParams;
 uniform vec4 u_bloomParams;
@@ -166,7 +167,7 @@ vec3 inferViewNormal(vec2 uv, vec3 centerPos)
     vec3 dx = abs(leftZ - centerPos.z) < abs(rightZ - centerPos.z) ? centerPos - leftPos : rightPos - centerPos;
     vec3 dy = abs(topZ - centerPos.z) < abs(bottomZ - centerPos.z) ? centerPos - topPos : bottomPos - centerPos;
     vec3 normal = normalize(cross(dy, dx));
-    return normal.z < 0.0 ? -normal : normal;
+    return normal.z > 0.0 ? -normal : normal;
 }
 
 vec3 sampleViewNormal(vec2 uv, vec3 centerPos)
@@ -176,74 +177,7 @@ vec3 sampleViewNormal(vec2 uv, vec3 centerPos)
     float lenSq = dot(normal, normal);
     vec3 inferred = inferViewNormal(uv, centerPos);
     normal = normalize(mix(inferred, normal, step(0.05, lenSq)));
-    return normal.z < 0.0 ? -normal : normal;
-}
-
-float gtaoHorizonTap(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float stepScale, float jitter, float bias)
-{
-    float sampleRadius = pixelRadius * clamp(stepScale + jitter * 0.035, 0.02, 1.0);
-    vec2 sampleUv = uv + dir * sampleRadius * u_screenParams.zw;
-    float sampleDepthRaw = sampleDepth(sampleUv);
-    if (sampleDepthRaw >= 0.9999) return 0.0;
-
-    vec3 samplePos = reconstructViewPos(sampleUv, linearizeDepth(sampleDepthRaw));
-    vec3 delta = samplePos - centerPos;
-    float dist = max(length(delta), 0.000001);
-    float depthDelta = samplePos.z - centerPos.z;
-    float distanceFade = saturate(1.0 - dist / max(viewRadius, 0.0001));
-    float depthFade = saturate(1.0 - abs(depthDelta) / max(viewRadius * 1.65, 0.0001));
-    float thinDiscontinuityFade = saturate((depthDelta + viewRadius * 0.30) / max(viewRadius * 0.30, 0.0001));
-    float horizon = max(dot(normal, delta / dist) - bias, 0.0);
-    return horizon * distanceFade * distanceFade * depthFade * thinDiscontinuityFade;
-}
-
-float gtaoSliceOcclusion(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float jitter, float bias)
-{
-    float side0 = 0.0;
-    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.08, jitter, bias));
-    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.22, jitter, bias));
-    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.48, jitter, bias));
-    side0 = max(side0, gtaoHorizonTap(uv, centerPos, normal,  dir, pixelRadius, viewRadius, 0.85, jitter, bias));
-
-    float side1 = 0.0;
-    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.08, jitter, bias));
-    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.22, jitter, bias));
-    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.48, jitter, bias));
-    side1 = max(side1, gtaoHorizonTap(uv, centerPos, normal, -dir, pixelRadius, viewRadius, 0.85, jitter, bias));
-
-    return (side0 + side1) * 0.5;
-}
-
-float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
-{
-    float intensity = u_screenSpaceParams.x;
-    if (intensity <= 0.0 || centerDepthRaw >= 0.9999) return 1.0;
-
-    float centerDepth = linearizeDepth(centerDepthRaw);
-    vec3 centerPos = reconstructViewPos(uv, centerDepth);
-    vec3 normal = sampleViewNormal(uv, centerPos);
-    float viewRadius = max(u_screenSpaceParams.y, 0.05);
-    float projectedRadiusX = viewRadius / max(centerDepth * u_depthParams.z, 0.0001) * u_screenParams.x * 0.5;
-    float projectedRadiusY = viewRadius / max(centerDepth * u_depthParams.w, 0.0001) * u_screenParams.y * 0.5;
-    float pixelRadius = clamp(min(projectedRadiusX, projectedRadiusY), 2.0, 96.0);
-    float bias = 0.10;
-    float noise = hash12(pixel + vec2_splat(u_temporalParams.w * 0.37));
-    float angle = noise * 6.2831853;
-    vec2 rot = vec2(cos(angle), sin(angle));
-    vec2 d0 = rot;
-    vec2 d1 = vec2(-rot.y, rot.x);
-    vec2 d2 = normalize(d0 + d1);
-    vec2 d3 = normalize(d0 - d1);
-
-    float occ = 0.0;
-    occ += gtaoSliceOcclusion(uv, centerPos, normal, d0, pixelRadius, viewRadius, noise, bias);
-    occ += gtaoSliceOcclusion(uv, centerPos, normal, d1, pixelRadius, viewRadius, noise, bias);
-    occ += gtaoSliceOcclusion(uv, centerPos, normal, d2, pixelRadius, viewRadius, noise, bias);
-    occ += gtaoSliceOcclusion(uv, centerPos, normal, d3, pixelRadius, viewRadius, noise, bias);
-
-    occ = saturate(occ * 0.55);
-    float visibility = pow(saturate(1.0 - occ), max(intensity, 0.01));
-    return clamp(visibility, 0.0, 1.0);
+    return normal.z > 0.0 ? -normal : normal;
 }
 
 vec4 ssrTap(vec3 origin, vec3 rayDir, float rayDistance, float thickness)
@@ -312,7 +246,7 @@ void main()
 
     float centerDepth = sampleDepth(uv);
     color = dofApprox(uv, centerDepth, color);
-    color *= gtaoApprox(uv, centerDepth, pixel);
+    color *= texture2D(s_gtao, uv).x;
     color = ssrApprox(uv, centerDepth, color);
     color += texture2D(s_bloomMask, uv).rgb * u_bloomParams.x;
     color = applyColorLut(color);

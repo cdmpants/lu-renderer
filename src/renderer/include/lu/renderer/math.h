@@ -65,7 +65,7 @@ inline Mat4 identity() {
 }
 
 inline Mat4 look_at(Vec3 eye, Vec3 target, Vec3 up) {
-    Vec3 z = normalize(eye - target);
+    Vec3 z = normalize(target - eye);
     Vec3 x = normalize(cross(up, z));
     Vec3 y = cross(z, x);
 
@@ -81,11 +81,10 @@ inline Mat4 perspective(float fov_y_radians, float aspect, float near_plane, flo
     Mat4 out{};
     out.m[0] = f / aspect;
     out.m[5] = f;
-    out.m[10] = far_plane / (near_plane - far_plane);
-    out.m[11] = -1.0f;
-    out.m[14] = (near_plane * far_plane) / (near_plane - far_plane);
+    out.m[10] = far_plane / (far_plane - near_plane);
+    out.m[11] = 1.0f;
+    out.m[14] = -(near_plane * far_plane) / (far_plane - near_plane);
     return out;
 }
 
 } // namespace lu::renderer
-

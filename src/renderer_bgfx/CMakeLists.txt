@@ -45,6 +45,8 @@ bgfx_compile_shaders(
         "${LU_RENDERER_SHADER_DIR}/fs_clear_plastic.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_reflection_mask.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_bloom.sc"
+        "${LU_RENDERER_SHADER_DIR}/fs_gtao.sc"
+        "${LU_RENDERER_SHADER_DIR}/fs_gtao_denoise.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_post_effects.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_fullscreen_copy.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_shadow_depth.sc"
