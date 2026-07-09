@@ -38,9 +38,15 @@ float shadowVisibilityWithNormal(vec3 worldPos, vec3 worldNormal)
 
     float texel = u_shadowParams.w;
     float lightRadius = max(u_shadowParams.y, 0.0);
+    if (lightRadius <= 0.0001) {
+        return step(receiverDepth, shadowDepthAt(uv));
+    }
+
+    float softness = saturate(lightRadius * 5.0);
+    float softnessResponse = sqrt(softness);
     float blockerSum = 0.0;
     float blockerCount = 0.0;
-    float searchRadius = max(1.0, lightRadius * 96.0);
+    float searchRadius = mix(1.0, 36.0, softnessResponse);
     vec2 searchStep = vec2_splat(texel * searchRadius);
 
     vec2 poisson0 = vec2(-0.326, -0.406);
@@ -73,7 +79,7 @@ float shadowVisibilityWithNormal(vec3 worldPos, vec3 worldNormal)
 
     float avgBlocker = blockerSum / blockerCount;
     float receiverGap = saturate((receiverDepth - avgBlocker) * 64.0);
-    float radiusTexels = max(1.0, lightRadius * 192.0 * (0.35 + receiverGap));
+    float radiusTexels = mix(1.0, 42.0, softnessResponse) * (0.25 + receiverGap * 0.95);
     float radius = radiusTexels * texel;
     float visibility = 0.0;
     visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson0));
