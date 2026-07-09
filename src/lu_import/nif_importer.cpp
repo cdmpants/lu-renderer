@@ -6,6 +6,7 @@
 #include "gamebryo/nif/nif_reader.h"
 
 #include <algorithm>
+#include <cmath>
 #include <cstring>
 #include <fstream>
 #include <optional>
@@ -356,6 +357,20 @@ UvTiling detectUvTiling(const lu::assets::NifRenderMesh& mesh, bool use_second_u
 
 UvTiling mergeUvTiling(UvTiling a, UvTiling b) {
     return {a.u || b.u, a.v || b.v};
+}
+
+Vec2 applyTextureTransform(Vec2 uv, const lu::assets::NifTextureTransform& transform) {
+    if (!transform.enabled) return uv;
+
+    const float centered_u = (uv.x - transform.center.u) * transform.scale.u;
+    const float centered_v = (uv.y - transform.center.v) * transform.scale.v;
+    const float sin_r = std::sin(transform.rotation);
+    const float cos_r = std::cos(transform.rotation);
+
+    return {
+        transform.center.u + centered_u * cos_r - centered_v * sin_r + transform.translation.u,
+        transform.center.v + centered_u * sin_r + centered_v * cos_r + transform.translation.v
+    };
 }
 
 std::vector<uint8_t> readFile(const std::filesystem::path& path) {
@@ -884,8 +899,12 @@ NifImportResult importNif(const NifImportOptions& options) {
                 Vertex rv;
                 rv.position = {v.position[0], v.position[1], v.position[2]};
                 rv.normal = {v.normal[0], v.normal[1], v.normal[2]};
-                rv.uv = {v.uv[0], v.uv[1]};
-                rv.uv2 = {v.uv2[0], v.uv2[1]};
+                rv.uv = applyTextureTransform(
+                    {v.uv[0], v.uv[1]},
+                    mesh.material.diffuse_texture_transform);
+                rv.uv2 = applyTextureTransform(
+                    {v.uv2[0], v.uv2[1]},
+                    mesh.material.dark_texture_transform);
                 rv.color_rgba8 = packColor(v.color[0], v.color[1], v.color[2], v.color[3]);
                 if (vertex_index < mesh.vertex_influences.size()) {
                     const auto& influences = mesh.vertex_influences[vertex_index];

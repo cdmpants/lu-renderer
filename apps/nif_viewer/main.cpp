@@ -41,6 +41,7 @@
 #include <iostream>
 #include <limits>
 #include <cmath>
+#include <optional>
 #include <string>
 #include <vector>
 
@@ -69,6 +70,8 @@ struct Args {
     std::filesystem::path nif_path;
     std::filesystem::path screenshot_path;
     RenderFeatureSettings features;
+    std::optional<float> camera_distance;
+    std::optional<Vec3> camera_target;
     uint32_t exit_after_frames = 0;
     bool hidden = false;
     bool transparent_test_scene = false;
@@ -216,6 +219,14 @@ Args parseArgs(int argc, char** argv) {
         } else if (arg == "--probe-intensity" && i + 1 < argc) {
             args.features.reflection_probe.enabled = true;
             args.features.reflection_probe.intensity = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--camera-distance" && i + 1 < argc) {
+            args.camera_distance = std::max(0.1f, std::strtof(argv[++i], nullptr));
+        } else if (arg == "--camera-target" && i + 3 < argc) {
+            args.camera_target = Vec3{
+                std::strtof(argv[++i], nullptr),
+                std::strtof(argv[++i], nullptr),
+                std::strtof(argv[++i], nullptr)
+            };
         } else if ((arg == "--exit-after-frames" || arg == "--frames") && i + 1 < argc) {
             args.exit_after_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--hidden") {
@@ -443,6 +454,84 @@ const char* alphaSemanticName(lu::renderer::ShaderAlphaSemantic semantic) {
     return "?";
 }
 
+struct UvBounds {
+    float min_u = std::numeric_limits<float>::max();
+    float min_v = std::numeric_limits<float>::max();
+    float max_u = std::numeric_limits<float>::lowest();
+    float max_v = std::numeric_limits<float>::lowest();
+    bool valid = false;
+};
+
+struct MeshBounds {
+    Vec3 min_v{
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max(),
+        std::numeric_limits<float>::max()
+    };
+    Vec3 max_v{
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest(),
+        std::numeric_limits<float>::lowest()
+    };
+    bool valid = false;
+};
+
+MeshBounds computeMeshBounds(const MeshAsset& mesh) {
+    MeshBounds bounds;
+    for (const auto& vertex : mesh.vertices) {
+        bounds.min_v.x = std::min(bounds.min_v.x, vertex.position.x);
+        bounds.min_v.y = std::min(bounds.min_v.y, vertex.position.y);
+        bounds.min_v.z = std::min(bounds.min_v.z, vertex.position.z);
+        bounds.max_v.x = std::max(bounds.max_v.x, vertex.position.x);
+        bounds.max_v.y = std::max(bounds.max_v.y, vertex.position.y);
+        bounds.max_v.z = std::max(bounds.max_v.z, vertex.position.z);
+        bounds.valid = true;
+    }
+    return bounds;
+}
+
+UvBounds computeUvBounds(const MeshAsset& mesh, bool use_second_uv) {
+    UvBounds bounds;
+    for (const auto& vertex : mesh.vertices) {
+        const auto& uv = use_second_uv ? vertex.uv2 : vertex.uv;
+        bounds.min_u = std::min(bounds.min_u, uv.x);
+        bounds.min_v = std::min(bounds.min_v, uv.y);
+        bounds.max_u = std::max(bounds.max_u, uv.x);
+        bounds.max_v = std::max(bounds.max_v, uv.y);
+        bounds.valid = true;
+    }
+    return bounds;
+}
+
+void printMeshBounds(std::ostream& stream, const MeshBounds& bounds) {
+    stream << " bounds=";
+    if (!bounds.valid) {
+        stream << "<none>";
+        return;
+    }
+    stream << bounds.min_v.x << "/" << bounds.min_v.y << "/" << bounds.min_v.z
+           << ".." << bounds.max_v.x << "/" << bounds.max_v.y << "/" << bounds.max_v.z;
+}
+
+void printUvBounds(std::ostream& stream, const char* label, const UvBounds& bounds) {
+    stream << " " << label << "=";
+    if (!bounds.valid) {
+        stream << "<none>";
+        return;
+    }
+    stream << bounds.min_u << "/" << bounds.min_v << ".."
+           << bounds.max_u << "/" << bounds.max_v;
+}
+
+void printTextureAddress(std::ostream& stream,
+                         const char* label,
+                         const lu::renderer::TextureAddressMode& address) {
+    stream << " " << label << "="
+           << (address.authored ? "authored" : "default")
+           << ":u" << (address.wrap_u ? "Wrap" : "Clamp")
+           << ":v" << (address.wrap_v ? "Wrap" : "Clamp");
+}
+
 void printShaderDiagnostics(const RenderWorld& world) {
     std::cout << "Asset key: " << (world.source_asset_path.empty() ? "<debug>" : world.source_asset_path) << "\n";
     const size_t count = std::min<size_t>(world.meshes.size(), 8);
@@ -498,6 +587,21 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " darkTex=" << boolText(!material.dark_texture_path.empty())
             << " lod=" << boolText(mesh.has_lod_range)
             << " skin=" << boolText(mesh.is_skinned);
+        printMeshBounds(std::cout, computeMeshBounds(mesh));
+        printUvBounds(std::cout, "uv0", computeUvBounds(mesh, false));
+        printUvBounds(std::cout, "uv1", computeUvBounds(mesh, true));
+        if (!material.diffuse_texture_path.empty()) {
+            printTextureAddress(std::cout, "diffuseAddr", material.diffuse_texture_address);
+            std::cout << " diffuseFile=\""
+                      << std::filesystem::path(material.diffuse_texture_path).filename().string()
+                      << "\"";
+        }
+        if (!material.dark_texture_path.empty()) {
+            printTextureAddress(std::cout, "darkAddr", material.dark_texture_address);
+            std::cout << " darkFile=\""
+                      << std::filesystem::path(material.dark_texture_path).filename().string()
+                      << "\"";
+        }
         if (mesh.has_lod_range) {
             std::cout
                 << " lodParent=" << mesh.lod_parent_block
@@ -1922,6 +2026,13 @@ int main(int argc, char** argv) {
 
     OrbitCamera camera;
     resetCameraToWorld(world, camera);
+    if (args.camera_target) {
+        camera.setTarget(*args.camera_target);
+    }
+    if (args.camera_distance) {
+        camera.setDistance(*args.camera_distance);
+        camera.syncFlyToOrbit();
+    }
     renderer.loadWorld(world);
     setViewerTitle(window, args.nif_path);
 
