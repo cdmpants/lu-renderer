@@ -20,6 +20,7 @@ struct RendererInit {
     bgfx::NativeWindowHandleType::Enum native_window_type = bgfx::NativeWindowHandleType::Default;
     uint32_t width = 1280;
     uint32_t height = 720;
+    RenderFeatureSettings features;
     std::filesystem::path shader_dir = LU_RENDERER_SHADER_DIR;
     std::filesystem::path reflection_map_dir = LU_RENDERER_REFLECTION_MAP_DIR;
 };
@@ -37,6 +38,8 @@ public:
     void resize(uint32_t width, uint32_t height);
     void loadWorld(const RenderWorld& world);
     void setEnvironment(const EnvironmentState& environment);
+    void setFeatureSettings(const RenderFeatureSettings& features);
+    const RenderFeatureSettings& featureSettings() const { return features_; }
     void render(const OrbitCamera& camera);
     void clearWorld();
 
@@ -48,6 +51,7 @@ private:
         bgfx::VertexBufferHandle vertex_buffer = BGFX_INVALID_HANDLE;
         bgfx::IndexBufferHandle index_buffer = BGFX_INVALID_HANDLE;
         bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
+        bgfx::TextureHandle dark_texture = BGFX_INVALID_HANDLE;
         bgfx::TextureHandle reflection_texture = BGFX_INVALID_HANDLE;
         std::string name;
         MaterialAsset material;
@@ -70,6 +74,7 @@ private:
     bgfx::TextureHandle createSolidCubeTexture(uint32_t rgba);
     bgfx::ProgramHandle programForMaterial(const MaterialAsset& material) const;
     uint64_t renderStateForMaterial(const MaterialAsset& material) const;
+    uint32_t resetFlags() const;
     void destroyTextureCache();
     void destroyMesh(GpuMesh& mesh);
     void drawGrid();
@@ -81,19 +86,26 @@ private:
     std::unordered_map<std::string, bgfx::TextureHandle> texture_cache_;
     std::unordered_map<std::string, bgfx::TextureHandle> cube_texture_cache_;
     EnvironmentState environment_;
+    RenderFeatureSettings features_;
     bgfx::ProgramHandle legacy_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle basic_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle basic_lit_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle basic_two_layer_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle alpha_as_alpha_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle alpha_uv_scroll_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle legopp_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle legopp_no_ambient_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle legopp_emissive_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle metallic_brushed_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle metallic_polished_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle terrain_rim_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle ocean_distort_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle ocean_distort_directional_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle ocean_distort_unlit_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle ocean_distort_fx_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle clear_plastic_program_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_diffuse_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle s_dark_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle s_lu_env_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_material_diffuse_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_material_emissive_ = BGFX_INVALID_HANDLE;
@@ -109,9 +121,18 @@ private:
     bgfx::UniformHandle u_lu_fog_color_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_fog_params_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_shader_flags_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_variant_flags_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_effect_time_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_uv_motion1_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_uv_motion2_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_effect_params_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_glow_color_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_shiny_glint_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_shiny_glint_color_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_bbb_light_dir1_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_bbb_light_dir2_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_bbb_light_color1_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_bbb_light_color2_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle white_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle missing_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle neutral_env_texture_ = BGFX_INVALID_HANDLE;

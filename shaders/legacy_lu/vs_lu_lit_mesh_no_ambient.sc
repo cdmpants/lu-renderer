@@ -1,5 +1,5 @@
-$input a_position, a_normal, a_texcoord0, a_color0
-$output v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular
+$input a_position, a_normal, a_texcoord0, a_texcoord1, a_color0
+$output v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular, v_vertPos, v_diffuseExtra
 
 #include <bgfx_shader.sh>
 
@@ -12,6 +12,8 @@ uniform vec4 u_luLowerHemi;
 uniform vec4 u_luSpecular;
 uniform vec4 u_luCameraPos;
 uniform vec4 u_luShaderFlags;
+uniform vec4 u_luEffectTime;
+uniform vec4 u_luUvMotion1;
 
 vec3 calculateHemiLightInfluence(vec3 normal)
 {
@@ -41,11 +43,14 @@ void main()
 
     gl_Position = mul(u_modelViewProj, localPos);
     v_normal = normal;
-    v_texcoord0 = a_texcoord0;
+    v_texcoord0 = a_texcoord0 + (u_luUvMotion1.xy * u_luEffectTime.x * u_luEffectTime.y);
+    v_texcoord1 = a_texcoord1;
     v_color0 = meshColor;
     v_worldPos = worldPos;
     v_reflectVector = reflect(viewVector, normal);
     v_vdn = dot(viewVector, normal);
     v_diffuse = vec4(diffuse, ldn);
     v_specular = calculateSpecular(viewVector, ldn, normal, 120.0, 4.19);
+    v_vertPos = a_position.y;
+    v_diffuseExtra = vec3_splat(0.0);
 }

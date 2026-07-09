@@ -13,6 +13,7 @@
 #endif
 
 #include "lu/renderer/camera.h"
+#include "lu/renderer/lu_import/animation_importer.h"
 #include "lu/renderer/lu_import/lvl_environment_importer.h"
 #include "lu/renderer/lu_import/nif_importer.h"
 #include "lu/renderer/render_types.h"
@@ -40,13 +41,16 @@
 #include <string>
 
 using lu::renderer::MeshAsset;
+using lu::renderer::AnimationAsset;
 using lu::renderer::CameraMode;
 using lu::renderer::EnvironmentState;
 using lu::renderer::LegacyShaderFamily;
 using lu::renderer::OrbitCamera;
 using lu::renderer::RenderAlphaMode;
 using lu::renderer::RenderCullMode;
+using lu::renderer::RenderFeatureSettings;
 using lu::renderer::RenderWorld;
+using lu::renderer::SurfaceModel;
 using lu::renderer::Vec3;
 using lu::renderer::Vertex;
 using lu::renderer::bgfx_backend::BgfxRenderer;
@@ -57,6 +61,7 @@ namespace {
 struct Args {
     std::filesystem::path client_root;
     std::filesystem::path lvl_path;
+    std::filesystem::path animation_path;
     std::filesystem::path nif_path;
     std::filesystem::path screenshot_path;
     uint32_t exit_after_frames = 0;
@@ -70,6 +75,7 @@ struct InputState {
     double last_x = 0.0;
     double last_y = 0.0;
     OrbitCamera* camera = nullptr;
+    RenderFeatureSettings features;
 };
 
 struct AppState {
@@ -80,8 +86,10 @@ struct AppState {
     InputState input;
     std::filesystem::path pending_import;
     std::filesystem::path pending_lvl_import;
+    std::filesystem::path pending_animation_import;
     bool import_requested = false;
     bool lvl_import_requested = false;
+    bool animation_import_requested = false;
     bool manual_environment_override = false;
 #if defined(_WIN32)
     WNDPROC original_wnd_proc = nullptr;
@@ -102,6 +110,8 @@ Args parseArgs(int argc, char** argv) {
             args.client_root = argv[++i];
         } else if (arg == "--lvl" && i + 1 < argc) {
             args.lvl_path = argv[++i];
+        } else if ((arg == "--kfm" || arg == "--kf" || arg == "--anim" || arg == "--animation") && i + 1 < argc) {
+            args.animation_path = argv[++i];
         } else if (arg == "--nif" && i + 1 < argc) {
             args.nif_path = argv[++i];
         } else if (arg == "--screenshot" && i + 1 < argc) {
@@ -253,14 +263,76 @@ const char* shaderFamilyName(LegacyShaderFamily family) {
     case LegacyShaderFamily::BasicLit: return "basic-lit";
     case LegacyShaderFamily::AlphaAsAlpha: return "alpha";
     case LegacyShaderFamily::AlphaUvScroll: return "alpha-scroll";
+    case LegacyShaderFamily::BasicTwoLayer: return "basic-2layer";
     case LegacyShaderFamily::LegoppEffect: return "legopp-fx";
     case LegacyShaderFamily::LegoppNoAmbient: return "legopp-noambient";
     case LegacyShaderFamily::LegoppEmissive: return "legopp-emissive";
+    case LegacyShaderFamily::Metallic: return "metallic";
     case LegacyShaderFamily::TerrainRim: return "terrain-rim";
     case LegacyShaderFamily::OceanDistort: return "ocean-distort";
     case LegacyShaderFamily::OceanDistortDirectional: return "ocean-dir";
+    case LegacyShaderFamily::OceanDistortFx: return "ocean-fx";
+    case LegacyShaderFamily::OceanDistortUnlit: return "ocean-unlit";
     case LegacyShaderFamily::LegoppLighting: return "legopp";
     case LegacyShaderFamily::ClearPlastic: return "clear";
+    }
+    return "?";
+}
+
+const char* legoppVariantName(lu::renderer::LegoppShaderVariant variant) {
+    switch (variant) {
+    case lu::renderer::LegoppShaderVariant::None: return "none";
+    case lu::renderer::LegoppShaderVariant::Base: return "base";
+    case lu::renderer::LegoppShaderVariant::NoAmbient: return "noambient";
+    case lu::renderer::LegoppShaderVariant::Emissive: return "emissive";
+    case lu::renderer::LegoppShaderVariant::SuperEmissive: return "superemissive";
+    case lu::renderer::LegoppShaderVariant::Glow: return "glow";
+    case lu::renderer::LegoppShaderVariant::GlowIgnoreVertAlpha: return "glow-ignore-va";
+    case lu::renderer::LegoppShaderVariant::Grayscale: return "grayscale";
+    case lu::renderer::LegoppShaderVariant::Darkling: return "darkling";
+    case lu::renderer::LegoppShaderVariant::DarklingSpecular: return "darkling-spec";
+    case lu::renderer::LegoppShaderVariant::DarklingStructure: return "darkling-structure";
+    case lu::renderer::LegoppShaderVariant::DarklingShinyGlint: return "darkling-glint";
+    case lu::renderer::LegoppShaderVariant::DarklingSpecularShinyGlint: return "darkling-spec-glint";
+    case lu::renderer::LegoppShaderVariant::DarklingStructureShinyGlint: return "darkling-structure-glint";
+    case lu::renderer::LegoppShaderVariant::Item: return "item";
+    case lu::renderer::LegoppShaderVariant::ItemGlow: return "item-glow";
+    case lu::renderer::LegoppShaderVariant::FrontEnd: return "frontend";
+    case lu::renderer::LegoppShaderVariant::MaskedNonDecal: return "masked-nondecal";
+    case lu::renderer::LegoppShaderVariant::Reveal: return "reveal";
+    case lu::renderer::LegoppShaderVariant::FadeUp: return "fadeup";
+    case lu::renderer::LegoppShaderVariant::AnimUv: return "animuv";
+    case lu::renderer::LegoppShaderVariant::NoLight: return "nolight";
+    case lu::renderer::LegoppShaderVariant::FaceCreate: return "facecreate";
+    case lu::renderer::LegoppShaderVariant::PetTamingCloud: return "pet-cloud";
+    case lu::renderer::LegoppShaderVariant::ThreeLight: return "3lights";
+    case lu::renderer::LegoppShaderVariant::ShinyGlint: return "shiny-glint";
+    }
+    return "?";
+}
+
+const char* resolutionSourceName(lu::renderer::ShaderResolutionSource source) {
+    switch (source) {
+    case lu::renderer::ShaderResolutionSource::Unresolved: return "unresolved";
+    case lu::renderer::ShaderResolutionSource::CdClientAsset: return "cdclient";
+    case lu::renderer::ShaderResolutionSource::CdClientMultishaderPrefix: return "cdclient-prefix";
+    case lu::renderer::ShaderResolutionSource::NifMultiShaderGameValue: return "nif-nimultishader";
+    case lu::renderer::ShaderResolutionSource::NifMaterialName: return "nif-material";
+    case lu::renderer::ShaderResolutionSource::NifFxShaderName: return "nif-fxshader";
+    case lu::renderer::ShaderResolutionSource::Fallback: return "fallback";
+    }
+    return "?";
+}
+
+const char* alphaSemanticName(lu::renderer::ShaderAlphaSemantic semantic) {
+    switch (semantic) {
+    case lu::renderer::ShaderAlphaSemantic::Unknown: return "unknown";
+    case lu::renderer::ShaderAlphaSemantic::OutputAlpha: return "output";
+    case lu::renderer::ShaderAlphaSemantic::AlphaTest: return "test";
+    case lu::renderer::ShaderAlphaSemantic::ControlGlow: return "control-glow";
+    case lu::renderer::ShaderAlphaSemantic::ControlEmissive: return "control-emissive";
+    case lu::renderer::ShaderAlphaSemantic::ControlDarkling: return "control-darkling";
+    case lu::renderer::ShaderAlphaSemantic::Ignored: return "ignored";
     }
     return "?";
 }
@@ -276,11 +348,16 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " shader=" << material.lu_shader_id
             << " gameValue=" << material.lu_shader_game_value
             << " label=\"" << material.lu_shader_label << "\""
+            << " variant=" << legoppVariantName(material.legopp_variant)
             << " program=" << shaderFamilyName(material.shader_family)
             << " port=" << portStatusName(material.lu_shader_port_status)
             << " fx=\"" << material.lu_shader_source_file << "\""
             << " technique=\"" << material.lu_shader_source_technique << "\""
+            << " sourceNote=\"" << material.lu_shader_source_status_note << "\""
+            << " validationNote=\"" << material.lu_shader_validation_status_note << "\""
             << " resolved=" << boolText(material.lu_shader_resolved)
+            << " source=" << resolutionSourceName(material.lu_shader_resolution_source)
+            << " metadata=\"" << material.lu_shader_metadata << "\""
             << " multishader=" << boolText(material.lu_shader_asset_is_multishader)
             << " prefix=" << material.lu_multishader_prefix_id
             << " vc=" << boolText(material.lu_shader_uses_vertex_color)
@@ -290,21 +367,31 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " fog=" << boolText(material.lu_shader_uses_fog)
             << " spec=" << boolText(material.lu_shader_uses_specular)
             << " refl=" << boolText(material.lu_shader_uses_reflection)
+            << " shadowTerrain=" << boolText(material.lu_shader_uses_shadow_terrain)
             << " env=\"" << material.lu_shader_reflection_map << "\""
             << " envSemantic=\"" << material.lu_shader_reflection_semantic << "\""
             << " uvAnim=" << boolText(material.lu_shader_uses_uv_animation)
             << " alphaAnim=" << boolText(material.lu_shader_uses_alpha_animation)
+            << " matCtrl=" << boolText(material.nif_has_material_color_controller)
+            << " emCtrl=" << boolText(material.material_emissive_controller)
+            << " emKeys=" << material.material_emissive_controller_keys.size()
+            << " emRange=" << material.material_emissive_controller_start << "/"
+            << material.material_emissive_controller_stop
             << " motion1=" << material.lu_uv_motion_layer1.x << "/" << material.lu_uv_motion_layer1.y
             << " motion2=" << material.lu_uv_motion_layer2.x << "/" << material.lu_uv_motion_layer2.y
             << " alpha=" << alphaModeName(material.alpha_mode)
+            << " alphaSemantic=" << alphaSemanticName(material.lu_shader_alpha_semantic)
             << " test=" << boolText(material.alpha_test)
             << " blend=" << boolText(material.alpha_blend)
+            << " zwrite=" << boolText(material.depth_write)
             << " cull=" << cullModeName(material.cull_mode)
             << " emissive=" << std::max({material.emissive.x, material.emissive.y, material.emissive.z})
             << " diffuse=" << material.diffuse.x << "/" << material.diffuse.y << "/"
             << material.diffuse.z << "/" << material.diffuse.w
             << " texture=" << boolText(!material.diffuse_texture_path.empty())
-            << " lod=" << boolText(mesh.has_lod_range);
+            << " darkTex=" << boolText(!material.dark_texture_path.empty())
+            << " lod=" << boolText(mesh.has_lod_range)
+            << " skin=" << boolText(mesh.is_skinned);
         if (mesh.has_lod_range) {
             std::cout
                 << " lodParent=" << mesh.lod_parent_block
@@ -313,11 +400,63 @@ void printShaderDiagnostics(const RenderWorld& world) {
                 << " lodCenter=" << mesh.lod_center.x << "/" << mesh.lod_center.y << "/"
                 << mesh.lod_center.z;
         }
+        if (mesh.is_skinned) {
+            size_t weighted_vertices = 0;
+            for (const auto& vertex : mesh.vertices) {
+                if (vertex.bone_weights[0] > 0.0f) ++weighted_vertices;
+            }
+            std::cout
+                << " skinInst=" << mesh.skin_instance_block
+                << " skeletonRoot=" << mesh.skeleton_root_block
+                << " bones=" << mesh.skin_bone_node_blocks.size()
+                << " weightedVerts=" << weighted_vertices << "/" << mesh.vertices.size();
+            if (!mesh.skin_bone_names.empty()) {
+                std::cout << " firstBone=\"" << mesh.skin_bone_names.front() << "\"";
+            }
+        }
         std::cout
             << "\n";
     }
     if (world.meshes.size() > count) {
         std::cout << "  ... " << (world.meshes.size() - count) << " more mesh(es)\n";
+    }
+}
+
+void printAnimationDiagnostics(const RenderWorld& world) {
+    const auto& animation = world.animation;
+    if (animation.source_path.empty()) return;
+
+    std::cout
+        << "Animation: " << animation.source_path
+        << " clips=" << animation.clips.size()
+        << " model=\"" << animation.model_path << "\""
+        << " root=\"" << animation.model_root << "\""
+        << "\n";
+
+    const size_t count = std::min<size_t>(animation.clips.size(), 8);
+    for (size_t i = 0; i < count; ++i) {
+        const auto& clip = animation.clips[i];
+        std::cout
+            << "  [" << i << "] "
+            << "seqId=" << clip.sequence_id
+            << " animIndex=" << clip.anim_index
+            << " name=\"" << clip.name << "\""
+            << " source=\"" << std::filesystem::path(clip.source_path).filename().string() << "\""
+            << " time=" << clip.start_time << "/" << clip.stop_time
+            << " freq=" << clip.frequency
+            << " cycle=" << clip.cycle_type
+            << " controlled=" << clip.controlled_blocks.size()
+            << " textKeys=" << clip.text_keys.size();
+        if (!clip.controlled_blocks.empty()) {
+            std::cout << " firstTarget=\"" << clip.controlled_blocks.front().node_name << "\"";
+        }
+        if (!clip.text_keys.empty()) {
+            std::cout << " firstKey=\"" << clip.text_keys.front().text << "\"";
+        }
+        std::cout << "\n";
+    }
+    if (animation.clips.size() > count) {
+        std::cout << "  ... " << (animation.clips.size() - count) << " more clip(s)\n";
     }
 }
 
@@ -330,13 +469,22 @@ RenderWorld makeCubeWorld() {
 
     constexpr float s = 1.0f;
     const uint32_t c = color(1, 1, 1);
+    auto vertex = [](Vec3 position, Vec3 normal, lu::renderer::Vec2 uv, uint32_t color_rgba) {
+        Vertex v;
+        v.position = position;
+        v.normal = normal;
+        v.uv = uv;
+        v.uv2 = uv;
+        v.color_rgba8 = color_rgba;
+        return v;
+    };
     cube.vertices = {
-        {{-s,-s,-s}, { 0, 0,-1}, {0,1}, c}, {{ s,-s,-s}, { 0, 0,-1}, {1,1}, c}, {{ s, s,-s}, { 0, 0,-1}, {1,0}, c}, {{-s, s,-s}, { 0, 0,-1}, {0,0}, c},
-        {{-s,-s, s}, { 0, 0, 1}, {0,1}, c}, {{ s,-s, s}, { 0, 0, 1}, {1,1}, c}, {{ s, s, s}, { 0, 0, 1}, {1,0}, c}, {{-s, s, s}, { 0, 0, 1}, {0,0}, c},
-        {{-s,-s,-s}, {-1, 0, 0}, {0,1}, c}, {{-s, s,-s}, {-1, 0, 0}, {1,1}, c}, {{-s, s, s}, {-1, 0, 0}, {1,0}, c}, {{-s,-s, s}, {-1, 0, 0}, {0,0}, c},
-        {{ s,-s,-s}, { 1, 0, 0}, {0,1}, c}, {{ s, s,-s}, { 1, 0, 0}, {1,1}, c}, {{ s, s, s}, { 1, 0, 0}, {1,0}, c}, {{ s,-s, s}, { 1, 0, 0}, {0,0}, c},
-        {{-s,-s,-s}, { 0,-1, 0}, {0,1}, c}, {{-s,-s, s}, { 0,-1, 0}, {1,1}, c}, {{ s,-s, s}, { 0,-1, 0}, {1,0}, c}, {{ s,-s,-s}, { 0,-1, 0}, {0,0}, c},
-        {{-s, s,-s}, { 0, 1, 0}, {0,1}, c}, {{-s, s, s}, { 0, 1, 0}, {1,1}, c}, {{ s, s, s}, { 0, 1, 0}, {1,0}, c}, {{ s, s,-s}, { 0, 1, 0}, {0,0}, c}
+        vertex({-s,-s,-s}, { 0, 0,-1}, {0,1}, c), vertex({ s,-s,-s}, { 0, 0,-1}, {1,1}, c), vertex({ s, s,-s}, { 0, 0,-1}, {1,0}, c), vertex({-s, s,-s}, { 0, 0,-1}, {0,0}, c),
+        vertex({-s,-s, s}, { 0, 0, 1}, {0,1}, c), vertex({ s,-s, s}, { 0, 0, 1}, {1,1}, c), vertex({ s, s, s}, { 0, 0, 1}, {1,0}, c), vertex({-s, s, s}, { 0, 0, 1}, {0,0}, c),
+        vertex({-s,-s,-s}, {-1, 0, 0}, {0,1}, c), vertex({-s, s,-s}, {-1, 0, 0}, {1,1}, c), vertex({-s, s, s}, {-1, 0, 0}, {1,0}, c), vertex({-s,-s, s}, {-1, 0, 0}, {0,0}, c),
+        vertex({ s,-s,-s}, { 1, 0, 0}, {0,1}, c), vertex({ s, s,-s}, { 1, 0, 0}, {1,1}, c), vertex({ s, s, s}, { 1, 0, 0}, {1,0}, c), vertex({ s,-s, s}, { 1, 0, 0}, {0,0}, c),
+        vertex({-s,-s,-s}, { 0,-1, 0}, {0,1}, c), vertex({-s,-s, s}, { 0,-1, 0}, {1,1}, c), vertex({ s,-s, s}, { 0,-1, 0}, {1,0}, c), vertex({ s,-s,-s}, { 0,-1, 0}, {0,0}, c),
+        vertex({-s, s,-s}, { 0, 1, 0}, {0,1}, c), vertex({-s, s, s}, { 0, 1, 0}, {1,1}, c), vertex({ s, s, s}, { 0, 1, 0}, {1,0}, c), vertex({ s, s,-s}, { 0, 1, 0}, {0,0}, c)
     };
     cube.indices = {
         0,2,1, 0,3,2, 4,5,6, 4,6,7,
@@ -443,6 +591,22 @@ bool loadLvlEnvironment(const std::filesystem::path& lvl_path, RenderWorld& worl
     return true;
 }
 
+bool loadAnimation(const std::filesystem::path& animation_path, Args& args, RenderWorld& world) {
+    if (animation_path.empty()) return false;
+    lu::renderer::lu_import::AnimationImportOptions options;
+    options.path = animation_path;
+    auto imported = lu::renderer::lu_import::importAnimation(options);
+    if (!imported.error.empty()) {
+        std::cerr << "Animation import failed: " << imported.error << "\n";
+        return false;
+    }
+
+    world.animation = std::move(imported.animation);
+    args.animation_path = animation_path;
+    printAnimationDiagnostics(world);
+    return true;
+}
+
 void setViewerTitle(GLFWwindow* window, const std::filesystem::path& nif_path) {
     std::string title = "LU Renderer - NIF Viewer";
     if (!nif_path.empty()) {
@@ -455,6 +619,7 @@ void setViewerTitle(GLFWwindow* window, const std::filesystem::path& nif_path) {
 #if defined(_WIN32)
 constexpr UINT_PTR kMenuFileImportNif = 1001;
 constexpr UINT_PTR kMenuFileImportLvl = 1002;
+constexpr UINT_PTR kMenuFileImportAnimation = 1003;
 constexpr UINT_PTR kMenuViewOrbitCamera = 2001;
 constexpr UINT_PTR kMenuViewFlyCamera = 2002;
 constexpr UINT_PTR kMenuViewResetCamera = 2003;
@@ -487,6 +652,29 @@ constexpr int kEditFogG = 3161;
 constexpr int kEditFogB = 3162;
 constexpr int kEditFogNear = 3170;
 constexpr int kEditFogFar = 3171;
+constexpr int kGraphicsMsaaEnabled = 3180;
+constexpr int kEditMsaaSamples = 3181;
+constexpr int kGraphicsPbrEnabled = 3182;
+constexpr int kGraphicsSsrEnabled = 3183;
+constexpr int kEditSsrStrength = 3184;
+constexpr int kGraphicsGtaoEnabled = 3185;
+constexpr int kEditGtaoRadius = 3186;
+constexpr int kEditGtaoIntensity = 3187;
+constexpr int kGraphicsBloomEnabled = 3188;
+constexpr int kEditBloomThreshold = 3189;
+constexpr int kEditBloomIntensity = 3190;
+constexpr int kGraphicsVignetteEnabled = 3191;
+constexpr int kEditVignetteStrength = 3192;
+constexpr int kGraphicsDofEnabled = 3193;
+constexpr int kEditDofFocus = 3194;
+constexpr int kEditDofAperture = 3195;
+constexpr int kGraphicsFilmGrainEnabled = 3196;
+constexpr int kEditFilmGrainStrength = 3197;
+constexpr int kGraphicsShadowsEnabled = 3198;
+constexpr int kEditPcssRadius = 3199;
+constexpr int kEditPcssBias = 3200;
+constexpr int kGraphicsProbesEnabled = 3201;
+constexpr int kEditProbeIntensity = 3202;
 
 std::filesystem::path openFileDialog(HWND owner, const Args& args, const wchar_t* filter,
                                      const wchar_t* title, const std::filesystem::path& preferred_path) {
@@ -526,6 +714,12 @@ std::filesystem::path openLvlDialog(HWND owner, const Args& args) {
                           L"Import LVL Environment", args.lvl_path);
 }
 
+std::filesystem::path openAnimationDialog(HWND owner, const Args& args) {
+    return openFileDialog(owner, args,
+                          L"Animation files (*.kfm;*.kf)\0*.kfm;*.kf\0KFM files (*.kfm)\0*.kfm\0KF files (*.kf)\0*.kf\0All files (*.*)\0*.*\0\0",
+                          L"Import Animation", args.animation_path);
+}
+
 void setEditFloat(HWND window, int id, float value) {
     wchar_t text[64] = {};
     std::swprintf(text, std::size(text), L"%.6g", static_cast<double>(value));
@@ -542,6 +736,30 @@ float getEditFloat(HWND window, int id, float fallback) {
     return end == text ? fallback : value;
 }
 
+void setEditUInt(HWND window, int id, uint32_t value) {
+    wchar_t text[64] = {};
+    std::swprintf(text, std::size(text), L"%u", value);
+    SetDlgItemTextW(window, id, text);
+}
+
+uint32_t getEditUInt(HWND window, int id, uint32_t fallback) {
+    wchar_t text[128] = {};
+    if (GetDlgItemTextW(window, id, text, static_cast<int>(std::size(text))) <= 0) {
+        return fallback;
+    }
+    wchar_t* end = nullptr;
+    const unsigned long value = std::wcstoul(text, &end, 10);
+    return end == text ? fallback : static_cast<uint32_t>(value);
+}
+
+void setCheckbox(HWND window, int id, bool enabled) {
+    SendDlgItemMessageW(window, id, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+bool getCheckbox(HWND window, int id) {
+    return SendDlgItemMessageW(window, id, BM_GETCHECK, 0, 0) == BST_CHECKED;
+}
+
 void createLabel(HWND window, const wchar_t* text, int x, int y, int w, int h) {
     CreateWindowExW(0, L"STATIC", text, WS_CHILD | WS_VISIBLE | SS_LEFT,
                     x, y, w, h, window, nullptr, GetModuleHandleW(nullptr), nullptr);
@@ -550,6 +768,12 @@ void createLabel(HWND window, const wchar_t* text, int x, int y, int w, int h) {
 void createEdit(HWND window, int id, int x, int y) {
     CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                     x, y, 72, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                    GetModuleHandleW(nullptr), nullptr);
+}
+
+void createCheckbox(HWND window, int id, const wchar_t* text, int x, int y, int w = 150) {
+    CreateWindowExW(0, L"BUTTON", text, WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_AUTOCHECKBOX,
+                    x, y, w, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                     GetModuleHandleW(nullptr), nullptr);
 }
 
@@ -763,6 +987,15 @@ LRESULT CALLBACK viewerWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lp
                 }
             }
             return 0;
+        case kMenuFileImportAnimation:
+            if (app && app->args) {
+                std::filesystem::path selected = openAnimationDialog(hwnd, *app->args);
+                if (!selected.empty()) {
+                    app->pending_animation_import = selected;
+                    app->animation_import_requested = true;
+                }
+            }
+            return 0;
         case kMenuViewOrbitCamera:
             if (app && app->camera) {
                 app->camera->setMode(CameraMode::Orbit);
@@ -803,6 +1036,7 @@ void installNativeMenu(GLFWwindow* window, AppState& app) {
     app.view_menu = CreatePopupMenu();
     AppendMenuW(file_menu, MF_STRING, kMenuFileImportNif, L"Import NIF...");
     AppendMenuW(file_menu, MF_STRING, kMenuFileImportLvl, L"Import LVL Environment...");
+    AppendMenuW(file_menu, MF_STRING, kMenuFileImportAnimation, L"Import Animation...");
     AppendMenuW(menu_bar, MF_POPUP, reinterpret_cast<UINT_PTR>(file_menu), L"File");
     AppendMenuW(app.view_menu, MF_STRING, kMenuViewOrbitCamera, L"Orbit Camera");
     AppendMenuW(app.view_menu, MF_STRING, kMenuViewFlyCamera, L"Fly Camera");
@@ -978,6 +1212,9 @@ int main(int argc, char** argv) {
     if (!args.lvl_path.empty()) {
         loadLvlEnvironment(args.lvl_path, world);
     }
+    if (!args.animation_path.empty()) {
+        loadAnimation(args.animation_path, args, world);
+    }
 
     OrbitCamera camera;
     resetCameraToWorld(world, camera);
@@ -1020,12 +1257,14 @@ int main(int argc, char** argv) {
         if (app.import_requested) {
             app.import_requested = false;
             const EnvironmentState previous_environment = world.environment;
+            const AnimationAsset previous_animation = world.animation;
             if (loadNifWorld(app.pending_import, args, world)) {
                 if (app.manual_environment_override) {
                     world.environment = previous_environment;
                 } else if (!args.lvl_path.empty()) {
                     loadLvlEnvironment(args.lvl_path, world);
                 }
+                world.animation = previous_animation;
                 resetCameraToWorld(world, camera);
                 renderer.loadWorld(world);
                 setViewerTitle(window, args.nif_path);
@@ -1042,6 +1281,11 @@ int main(int argc, char** argv) {
                 if (app.lighting_window) populateLightingControls(app.lighting_window, world.environment);
             }
             app.pending_lvl_import.clear();
+        }
+        if (app.animation_import_requested) {
+            app.animation_import_requested = false;
+            loadAnimation(app.pending_animation_import, args, world);
+            app.pending_animation_import.clear();
         }
         renderer.render(camera);
         ++rendered_frames;

@@ -1,4 +1,6 @@
 add_library(lu_renderer_lu_import STATIC
+    animation_importer.cpp
+    include/lu/renderer/lu_import/animation_importer.h
     lvl_environment_importer.cpp
     include/lu/renderer/lu_import/lvl_environment_importer.h
     nif_importer.cpp
