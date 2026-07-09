@@ -68,46 +68,72 @@ float linearizeDepth(float depth)
     return u_depthParams.x / max(u_depthParams.y - depth, 0.00001);
 }
 
-float dofBlurRadius(float centerDepthRaw)
+float dofSignedCoc(float depthRaw)
 {
     float aperture = u_dofParams.x;
-    if (aperture <= 0.0 || centerDepthRaw >= 0.9999) return 0.0;
+    if (aperture <= 0.0 || depthRaw >= 0.9999) return 0.0;
 
-    float centerDepth = linearizeDepth(centerDepthRaw);
+    float viewDepth = linearizeDepth(depthRaw);
     float focusDepth = max(u_dofParams.y, 0.01);
     float maxRadius = max(u_dofParams.z, 0.0);
-    float focusRange = max(focusDepth, 1.0);
-    float coc = saturate(abs(centerDepth - focusDepth) / focusRange * aperture * 6.0);
-    return coc * maxRadius;
+    float focusRange = max(focusDepth * 0.45, 1.0);
+    float coc = (viewDepth - focusDepth) / focusRange * aperture * 5.0;
+    return clamp(coc, -1.0, 1.0) * maxRadius;
 }
 
-vec3 dofTap(vec2 uv, float centerDepth, vec2 offset, float radius, inout float totalWeight)
+void dofBokehTap(vec2 uv, float centerCoc, vec2 diskOffset, inout vec3 color, inout float totalWeight)
 {
-    vec2 sampleUv = uv + offset * radius * u_screenParams.zw;
+    float centerRadius = abs(centerCoc);
+    float sampleDistance = length(diskOffset);
+    vec2 sampleUv = uv + diskOffset * max(centerRadius, 1.0) * u_screenParams.zw;
     float sampleDepthRaw = sampleDepth(sampleUv);
-    float sampleDepth = sampleDepthRaw >= 0.9999 ? centerDepth : linearizeDepth(sampleDepthRaw);
-    float depthFade = saturate(1.0 - abs(sampleDepth - centerDepth) / max(centerDepth * 0.2, 1.0));
-    float weight = max(depthFade, 0.15);
+    float sampleCoc = dofSignedCoc(sampleDepthRaw);
+    float sampleRadius = abs(sampleCoc);
+    float sourceCoverage = saturate((sampleRadius - sampleDistance + 1.0) * 0.5);
+    float centerCoverage = saturate((centerRadius - sampleDistance + 1.0) * 0.5);
+    float foreground = sourceCoverage * step(sampleCoc, -0.5);
+    float background = max(centerCoverage, sourceCoverage * step(0.5, sampleCoc));
+    float sideMatch = centerCoc * sampleCoc >= 0.0 ? 1.0 : 0.35;
+    float weight = max(foreground, background * sideMatch);
+    weight *= 0.55 + 0.45 * saturate(1.0 - sampleDistance / max(centerRadius, 1.0));
     totalWeight += weight;
-    return texture2D(s_sceneColor, clamp(sampleUv, vec2_splat(0.0), vec2_splat(1.0))).rgb * weight;
+    color += texture2D(s_sceneColor, clamp(sampleUv, vec2_splat(0.0), vec2_splat(1.0))).rgb * weight;
 }
 
 vec3 dofApprox(vec2 uv, float centerDepthRaw, vec3 baseColor)
 {
-    float radius = dofBlurRadius(centerDepthRaw);
-    if (radius <= 0.25) return baseColor;
+    float centerCoc = dofSignedCoc(centerDepthRaw);
+    float radius = abs(centerCoc);
+    if (radius <= 0.35) return baseColor;
 
-    float centerDepth = linearizeDepth(centerDepthRaw);
     float totalWeight = 1.0;
     vec3 color = baseColor;
-    color += dofTap(uv, centerDepth, vec2( 0.95,  0.31), radius, totalWeight);
-    color += dofTap(uv, centerDepth, vec2(-0.95, -0.31), radius, totalWeight);
-    color += dofTap(uv, centerDepth, vec2( 0.59, -0.81), radius, totalWeight);
-    color += dofTap(uv, centerDepth, vec2(-0.59,  0.81), radius, totalWeight);
-    color += dofTap(uv, centerDepth, vec2( 0.00,  1.00), radius * 0.72, totalWeight);
-    color += dofTap(uv, centerDepth, vec2( 0.00, -1.00), radius * 0.72, totalWeight);
-    color += dofTap(uv, centerDepth, vec2( 1.00,  0.00), radius * 0.72, totalWeight);
-    color += dofTap(uv, centerDepth, vec2(-1.00,  0.00), radius * 0.72, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.000,  0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.433,  0.250), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.433, -0.250), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.000, -0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.433, -0.250), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.433,  0.250), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.000,  1.000), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.500,  0.866), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.866,  0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 1.000,  0.000), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.866, -0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.500, -0.866), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.000, -1.000), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.500, -0.866), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.866, -0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-1.000,  0.000), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.866,  0.500), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.500,  0.866), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.306,  0.739), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.739,  0.306), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.739, -0.306), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2( 0.306, -0.739), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.306, -0.739), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.739, -0.306), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.739,  0.306), color, totalWeight);
+    dofBokehTap(uv, centerCoc, vec2(-0.306,  0.739), color, totalWeight);
     return color / max(totalWeight, 0.0001);
 }
 

@@ -161,6 +161,8 @@ private:
     bgfx::UniformHandle s_shadow_map_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadow_matrix_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_shadow_params_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_shadow_bias_params_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_shadow_light_dir_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_post_params_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_bloom_params_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_dof_params_ = BGFX_INVALID_HANDLE;

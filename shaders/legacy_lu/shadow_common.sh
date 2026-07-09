@@ -2,13 +2,28 @@ SAMPLER2D(s_shadowMap, 3);
 
 uniform mat4 u_shadowMatrix;
 uniform vec4 u_shadowParams;
+uniform vec4 u_shadowBiasParams;
+uniform vec4 u_shadowLightDir;
 
 float shadowDepthAt(vec2 uv)
 {
     return texture2D(s_shadowMap, clamp(uv, vec2_splat(0.0), vec2_splat(1.0))).x;
 }
 
-float shadowVisibility(vec3 worldPos)
+float shadowReceiverBias(vec3 worldNormal)
+{
+    vec3 normal = normalize(worldNormal);
+    vec3 lightDir = normalize(u_shadowLightDir.xyz);
+    float ndotl = abs(dot(normal, lightDir));
+    float slope = saturate(1.0 - ndotl);
+    float texel = u_shadowParams.w;
+    float depthBias = max(u_shadowBiasParams.x, 0.0);
+    float normalBias = max(u_shadowBiasParams.y, 0.0) * texel * sqrt(slope);
+    float slopeBias = max(u_shadowBiasParams.z, 0.0) * texel * slope;
+    return depthBias + normalBias + slopeBias;
+}
+
+float shadowVisibilityWithNormal(vec3 worldPos, vec3 worldNormal)
 {
     if (u_shadowParams.x <= 0.0) return 1.0;
 
@@ -16,7 +31,7 @@ float shadowVisibility(vec3 worldPos)
     shadowPos.xyz /= max(shadowPos.w, 0.0001);
     vec2 uv = shadowPos.xy * 0.5 + 0.5;
     uv.y = 1.0 - uv.y;
-    float receiverDepth = shadowPos.z - u_shadowParams.z;
+    float receiverDepth = shadowPos.z - shadowReceiverBias(worldNormal);
     if (uv.x <= 0.001 || uv.y <= 0.001 || uv.x >= 0.999 || uv.y >= 0.999 || receiverDepth <= 0.0 || receiverDepth >= 1.0) {
         return 1.0;
     }
@@ -79,4 +94,9 @@ float shadowVisibility(vec3 worldPos)
     visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.390,  0.025)));
 
     return mix(0.25, 1.0, visibility / 16.0);
+}
+
+float shadowVisibility(vec3 worldPos)
+{
+    return shadowVisibilityWithNormal(worldPos, vec3(0.0, 1.0, 0.0));
 }

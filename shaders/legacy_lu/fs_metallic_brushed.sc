@@ -42,6 +42,6 @@ void main()
     vec4 outColor = mix(noTextureColor, mix(textureColor, vertColorTextureColor, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 reflectionTint = mix(v_color0.rgb, mix(texColor.rgb, v_color0.rgb * texColor.rgb, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 coloredRefl = reflColor.rgb * noiseColor.rgb * (reflColor.a - reflIntensity) * reflectionTint * 2.0;
-    outColor.rgb = (outColor.rgb * shadowVisibility(v_worldPos.xyz)) + coloredRefl + specColor;
+    outColor.rgb = (outColor.rgb * shadowVisibilityWithNormal(v_worldPos.xyz, normalize(v_normal))) + coloredRefl + specColor;
     gl_FragColor = vec4(applyLuFog(outColor.rgb, v_worldPos.xyz), outColor.a);
 }

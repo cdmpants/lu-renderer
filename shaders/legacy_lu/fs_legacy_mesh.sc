@@ -32,6 +32,6 @@ void main()
     if (u_luShaderFlags.w >= 0.0 && color.a < u_luShaderFlags.w) {
         discard;
     }
-    vec3 rgb = color.rgb * lit * shadowVisibility(v_worldPos.xyz);
+    vec3 rgb = color.rgb * lit * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
     gl_FragColor = vec4(applyLuFog(rgb, v_worldPos.xyz), color.a);
 }

@@ -201,6 +201,12 @@ Args parseArgs(int argc, char** argv) {
         } else if (arg == "--pcss-bias" && i + 1 < argc) {
             args.features.shadows.directional_shadows_enabled = true;
             args.features.shadows.pcss_bias = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--pcss-normal-bias" && i + 1 < argc) {
+            args.features.shadows.directional_shadows_enabled = true;
+            args.features.shadows.pcss_normal_bias = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--pcss-slope-bias" && i + 1 < argc) {
+            args.features.shadows.directional_shadows_enabled = true;
+            args.features.shadows.pcss_slope_bias = std::strtof(argv[++i], nullptr);
         } else if (arg == "--reflection-probe" || arg == "--probes") {
             args.features.reflection_probe.enabled = true;
         } else if (arg == "--no-reflection-probe" || arg == "--no-probes") {
@@ -831,6 +837,8 @@ constexpr int kGraphicsBrowseColorLut = 3211;
 constexpr int kGraphicsTaaEnabled = 3212;
 constexpr int kEditTaaFeedback = 3213;
 constexpr int kEditTaaJitter = 3214;
+constexpr int kEditPcssNormalBias = 3215;
+constexpr int kEditPcssSlopeBias = 3216;
 constexpr int kSliderPbrRoughness = 3300;
 constexpr int kSliderPbrMetallic = 3301;
 constexpr int kSliderPbrSpecular = 3302;
@@ -851,6 +859,8 @@ constexpr int kSliderSsrMaxDistance = 3316;
 constexpr int kSliderSsrThickness = 3317;
 constexpr int kSliderTaaFeedback = 3318;
 constexpr int kSliderTaaJitter = 3319;
+constexpr int kSliderPcssNormalBias = 3320;
+constexpr int kSliderPcssSlopeBias = 3321;
 
 struct SliderBinding {
     int slider_id;
@@ -859,7 +869,7 @@ struct SliderBinding {
     float max_value;
 };
 
-constexpr std::array<SliderBinding, 20> kGraphicsSliders = {{
+constexpr std::array<SliderBinding, 22> kGraphicsSliders = {{
     {kSliderPbrRoughness, kEditPbrRoughness, 0.04f, 1.0f},
     {kSliderPbrMetallic, kEditPbrMetallic, 0.0f, 1.0f},
     {kSliderPbrSpecular, kEditPbrSpecular, 0.0f, 3.0f},
@@ -878,7 +888,9 @@ constexpr std::array<SliderBinding, 20> kGraphicsSliders = {{
     {kSliderTaaFeedback, kEditTaaFeedback, 0.0f, 0.98f},
     {kSliderTaaJitter, kEditTaaJitter, 0.0f, 2.0f},
     {kSliderPcssRadius, kEditPcssRadius, 0.0f, 0.2f},
-    {kSliderPcssBias, kEditPcssBias, 0.0f, 0.08f},
+    {kSliderPcssBias, kEditPcssBias, 0.0f, 0.01f},
+    {kSliderPcssNormalBias, kEditPcssNormalBias, 0.0f, 8.0f},
+    {kSliderPcssSlopeBias, kEditPcssSlopeBias, 0.0f, 12.0f},
     {kSliderProbeIntensity, kEditProbeIntensity, 0.0f, 3.0f}
 }};
 
@@ -1122,6 +1134,8 @@ void populateGraphicsControls(HWND window, const RenderFeatureSettings& features
     setCheckbox(window, kGraphicsShadowsEnabled, features.shadows.directional_shadows_enabled);
     setEditAndSliderFloat(window, kEditPcssRadius, kSliderPcssRadius, features.shadows.pcss_light_radius);
     setEditAndSliderFloat(window, kEditPcssBias, kSliderPcssBias, features.shadows.pcss_bias);
+    setEditAndSliderFloat(window, kEditPcssNormalBias, kSliderPcssNormalBias, features.shadows.pcss_normal_bias);
+    setEditAndSliderFloat(window, kEditPcssSlopeBias, kSliderPcssSlopeBias, features.shadows.pcss_slope_bias);
     setCheckbox(window, kGraphicsProbesEnabled, features.reflection_probe.enabled);
     setEditAndSliderFloat(window, kEditProbeIntensity, kSliderProbeIntensity, features.reflection_probe.intensity);
 }
@@ -1206,8 +1220,10 @@ void applyGraphicsControls(HWND window, AppState& app, bool refresh_controls = t
     features.post.taa_feedback = std::clamp(getEditFloat(window, kEditTaaFeedback, features.post.taa_feedback), 0.0f, 0.98f);
     features.post.taa_jitter = std::clamp(getEditFloat(window, kEditTaaJitter, features.post.taa_jitter), 0.0f, 2.0f);
     features.shadows.directional_shadows_enabled = getCheckbox(window, kGraphicsShadowsEnabled);
-    features.shadows.pcss_light_radius = getEditFloat(window, kEditPcssRadius, features.shadows.pcss_light_radius);
-    features.shadows.pcss_bias = getEditFloat(window, kEditPcssBias, features.shadows.pcss_bias);
+    features.shadows.pcss_light_radius = std::max(0.0f, getEditFloat(window, kEditPcssRadius, features.shadows.pcss_light_radius));
+    features.shadows.pcss_bias = std::clamp(getEditFloat(window, kEditPcssBias, features.shadows.pcss_bias), 0.0f, 0.01f);
+    features.shadows.pcss_normal_bias = std::clamp(getEditFloat(window, kEditPcssNormalBias, features.shadows.pcss_normal_bias), 0.0f, 8.0f);
+    features.shadows.pcss_slope_bias = std::clamp(getEditFloat(window, kEditPcssSlopeBias, features.shadows.pcss_slope_bias), 0.0f, 12.0f);
     features.reflection_probe.enabled = getCheckbox(window, kGraphicsProbesEnabled);
     features.reflection_probe.intensity = getEditFloat(window, kEditProbeIntensity, features.reflection_probe.intensity);
 
@@ -1329,15 +1345,21 @@ LRESULT CALLBACK lightingWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM 
         createLabel(hwnd, L"Bias", 128, 969, 72, 18);
         createEdit(hwnd, kEditPcssBias, 210, 966);
         createSlider(hwnd, kSliderPcssBias, 292, 963, 250);
-        createCheckbox(hwnd, kGraphicsProbesEnabled, L"Reflection Probe", 12, 996, 135);
-        createLabel(hwnd, L"Intensity", 166, 999, 72, 18);
-        createEdit(hwnd, kEditProbeIntensity, 248, 996);
-        createSlider(hwnd, kSliderProbeIntensity, 330, 993, 212);
+        createLabel(hwnd, L"Normal Bias", 128, 999, 90, 18);
+        createEdit(hwnd, kEditPcssNormalBias, 210, 996);
+        createSlider(hwnd, kSliderPcssNormalBias, 292, 993, 250);
+        createLabel(hwnd, L"Slope Bias", 128, 1029, 90, 18);
+        createEdit(hwnd, kEditPcssSlopeBias, 210, 1026);
+        createSlider(hwnd, kSliderPcssSlopeBias, 292, 1023, 250);
+        createCheckbox(hwnd, kGraphicsProbesEnabled, L"Reflection Probe", 12, 1056, 135);
+        createLabel(hwnd, L"Intensity", 166, 1059, 72, 18);
+        createEdit(hwnd, kEditProbeIntensity, 248, 1056);
+        createSlider(hwnd, kSliderProbeIntensity, 330, 1053, 212);
         CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                        368, 1036, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingApply)),
+                        368, 1096, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingApply)),
                         GetModuleHandleW(nullptr), nullptr);
         CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        460, 1036, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingClose)),
+                        460, 1096, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingClose)),
                         GetModuleHandleW(nullptr), nullptr);
         if (app && app->world) populateLightingControls(hwnd, app->world->environment);
         if (app) populateGraphicsControls(hwnd, app->features);
@@ -1436,7 +1458,7 @@ void showLightingWindow(HWND owner, AppState& app) {
         L"LuRendererLightingFogWindow",
         L"Lighting / Fog / Graphics",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 580, 1120,
+        CW_USEDEFAULT, CW_USEDEFAULT, 580, 1180,
         owner,
         nullptr,
         GetModuleHandleW(nullptr),

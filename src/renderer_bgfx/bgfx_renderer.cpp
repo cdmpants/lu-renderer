@@ -586,6 +586,8 @@ bool BgfxRenderer::init(const RendererInit& init) {
     s_shadow_map_ = bgfx::createUniform("s_shadowMap", bgfx::UniformType::Sampler);
     u_shadow_matrix_ = bgfx::createUniform("u_shadowMatrix", bgfx::UniformType::Mat4);
     u_shadow_params_ = bgfx::createUniform("u_shadowParams", bgfx::UniformType::Vec4);
+    u_shadow_bias_params_ = bgfx::createUniform("u_shadowBiasParams", bgfx::UniformType::Vec4);
+    u_shadow_light_dir_ = bgfx::createUniform("u_shadowLightDir", bgfx::UniformType::Vec4);
     u_material_diffuse_ = bgfx::createUniform("u_materialDiffuse", bgfx::UniformType::Vec4);
     u_light_dir_ambient_ = bgfx::createUniform("u_lightDirAmbient", bgfx::UniformType::Vec4);
     u_light_color_ = bgfx::createUniform("u_lightColor", bgfx::UniformType::Vec4);
@@ -758,6 +760,8 @@ void BgfxRenderer::shutdown() {
     if (bgfx::isValid(s_shadow_map_)) bgfx::destroy(s_shadow_map_);
     if (bgfx::isValid(u_shadow_matrix_)) bgfx::destroy(u_shadow_matrix_);
     if (bgfx::isValid(u_shadow_params_)) bgfx::destroy(u_shadow_params_);
+    if (bgfx::isValid(u_shadow_bias_params_)) bgfx::destroy(u_shadow_bias_params_);
+    if (bgfx::isValid(u_shadow_light_dir_)) bgfx::destroy(u_shadow_light_dir_);
     if (bgfx::isValid(u_material_diffuse_)) bgfx::destroy(u_material_diffuse_);
     if (bgfx::isValid(u_light_dir_ambient_)) bgfx::destroy(u_light_dir_ambient_);
     if (bgfx::isValid(u_light_color_)) bgfx::destroy(u_light_color_);
@@ -1207,6 +1211,18 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
         std::max(0.0f, features_.shadows.pcss_bias),
         1.0f / static_cast<float>(kShadowMapSize)
     };
+    const float shadow_bias_params[4] = {
+        std::max(0.0f, features_.shadows.pcss_bias),
+        std::max(0.0f, features_.shadows.pcss_normal_bias),
+        std::max(0.0f, features_.shadows.pcss_slope_bias),
+        0.25f
+    };
+    const float shadow_light_dir[4] = {
+        lu_light_vec.x,
+        lu_light_vec.y,
+        lu_light_vec.z,
+        0.0f
+    };
 
     if (directional_shadows_enabled) {
         for (const auto& mesh : meshes_) {
@@ -1431,6 +1447,8 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             shadow_params_base[3]
         };
         bgfx::setUniform(u_shadow_params_, shadow_params);
+        bgfx::setUniform(u_shadow_bias_params_, shadow_bias_params);
+        bgfx::setUniform(u_shadow_light_dir_, shadow_light_dir);
         float bbb_light_dir1[4] = {1.0f, 1.0f, 1.0f, 0.0f};
         float bbb_light_dir2[4] = {-1.0f, -1.0f, -1.0f, 0.0f};
         float bbb_light_color1[4] = {0.0f, 1.0f, 0.0f, 1.0f};
@@ -1977,6 +1995,13 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
         std::max(0.0f, features_.shadows.pcss_bias),
         1.0f / static_cast<float>(kShadowMapSize)
     };
+    float shadow_bias_params[4] = {
+        std::max(0.0f, features_.shadows.pcss_bias),
+        std::max(0.0f, features_.shadows.pcss_normal_bias),
+        std::max(0.0f, features_.shadows.pcss_slope_bias),
+        0.25f
+    };
+    float shadow_light_dir[4] = {lu_light_vec.x, lu_light_vec.y, lu_light_vec.z, 0.0f};
     float reflection_params[4] = {0.0f, 1.0f, 0.0f, 0.0f};
     float bbb_light_dir1[4] = {1.0f, 1.0f, 1.0f, 0.0f};
     float bbb_light_dir2[4] = {-1.0f, -1.0f, -1.0f, 0.0f};
@@ -2072,6 +2097,8 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
 
             bgfx::setUniform(u_shadow_matrix_, disabled_shadow_matrix);
             bgfx::setUniform(u_shadow_params_, shadow_params);
+            bgfx::setUniform(u_shadow_bias_params_, shadow_bias_params);
+            bgfx::setUniform(u_shadow_light_dir_, shadow_light_dir);
             bgfx::setUniform(u_material_diffuse_, material_diffuse);
             bgfx::setUniform(u_material_emissive_, material_emissive);
             bgfx::setUniform(u_light_dir_ambient_, light_ambient);
@@ -2774,7 +2801,7 @@ void BgfxRenderer::drawPostProcess(
     const float dof_params[4] = {
         dof_aperture,
         std::max(0.01f, features_.post.dof_focus_distance),
-        std::clamp(dof_aperture * 80.0f, 0.0f, 18.0f),
+        std::clamp(dof_aperture * 96.0f, 0.0f, 28.0f),
         0.0f
     };
     const float color_lut_params[4] = {

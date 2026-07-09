@@ -85,7 +85,7 @@ vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflec
     vec3 envFresnel = pbrFresnelSchlick(ndotv, f0);
     vec3 envSpecular = envColor * envFresnel * reflectionScale * u_luReflectionParams.y * specularIntensity * mix(1.0, 0.35, roughness);
     vec3 ambient = baseColor * diffuseLight * (1.0 - metallic) * 0.25;
-    return (direct + ambient + envSpecular) * u_luLightColorShadow.a * shadowVisibility(worldPos);
+    return (direct + ambient + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
 }
 
 float isVariant(float variant)
@@ -113,7 +113,7 @@ void main()
     vec3 baseColor = reflColor.rgb + specular.rgb + v_diffuse.rgb + (fres * color.rgb);
     vec3 texturedBase = reflColor.rgb + specular.rgb + ((v_diffuse.rgb + fres) * color.rgb);
     vec3 litColor = (baseColor * (1.0 - u_luShaderFlags.x)) + (texturedBase * u_luShaderFlags.x);
-    litColor *= u_luLightColorShadow.a * shadowVisibility(v_worldPos.xyz);
+    litColor *= u_luLightColorShadow.a * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
     litColor = mix(litColor, calculatePbrColor(color.rgb, normal, viewVector, v_reflectVector, v_diffuse.rgb, v_worldPos.xyz, reflectionEnabled), u_luPbrParams.x);
 
     float emissiveAmount = u_materialEmissive.r * mix(1.0, v_color0.a, u_luShaderFlags.y);

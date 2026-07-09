@@ -33,7 +33,7 @@ void main()
     reflColor.a = u_luLightDirFade.w;
 
     float fres = (0.1 + 0.9 * pow(max(0.0, 1.0 - abs(v_vdn)), 3.5)) * 0.5;
-    reflColor.rgb += ((fres * diffuse * 2.5) + specular) * shadowVisibility(v_worldPos.xyz);
+    reflColor.rgb += ((fres * diffuse * 2.5) + specular) * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
     reflColor.a *= (1.0 - v_vdn) * 0.5;
 
     reflColor.rgb = applyLuFog(reflColor.rgb, v_worldPos.xyz);

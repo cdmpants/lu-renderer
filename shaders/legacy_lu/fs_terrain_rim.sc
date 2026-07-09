@@ -30,5 +30,5 @@ void main()
         discard;
     }
 
-    gl_FragColor = vec4(applyLuFog(color.rgb * shadowVisibility(v_worldPos.xyz), v_worldPos.xyz), color.a);
+    gl_FragColor = vec4(applyLuFog(color.rgb * shadowVisibilityWithNormal(v_worldPos.xyz, normalize(v_normal)), v_worldPos.xyz), color.a);
 }

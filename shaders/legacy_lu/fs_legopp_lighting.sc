@@ -137,7 +137,7 @@ vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflec
     vec3 envFresnel = pbrFresnelSchlick(ndotv, f0);
     vec3 envSpecular = envColor * envFresnel * reflectionScale * u_luReflectionParams.y * specularIntensity * mix(1.0, 0.35, roughness);
     vec3 ambient = baseColor * diffuseLight * (1.0 - metallic) * 0.25;
-    return (direct + ambient + envSpecular) * u_luLightColorShadow.a * shadowVisibility(worldPos);
+    return (direct + ambient + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
 }
 
 vec4 applyGrayscale(vec4 result)
@@ -193,7 +193,7 @@ void main()
     vec3 builtInColor = reflColor.rgb + specular.rgb + v_diffuse.rgb + v_diffuseExtra + (fres * color.rgb);
     vec3 texturedColor = reflColor.rgb + specular.rgb + v_diffuseExtra + ((v_diffuse.rgb + fres) * color.rgb);
     vec3 rgb = (builtInColor * (1.0 - u_luShaderFlags.x)) + (texturedColor * u_luShaderFlags.x);
-    rgb *= u_luLightColorShadow.a * shadowVisibility(v_worldPos.xyz);
+    rgb *= u_luLightColorShadow.a * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
     rgb = mix(rgb, calculatePbrColor(color.rgb, normal, viewVector, v_reflectVector, v_diffuse.rgb, v_worldPos.xyz, reflectionEnabled), u_luPbrParams.x);
 
     float ignoreVertAlpha = isVariant(LEGOPP_VARIANT_GLOW_IGNORE_VERT_ALPHA);
@@ -241,7 +241,7 @@ void main()
         vec4 maskedColor = mix(v_color0, maskedTextureColor, u_luShaderFlags.x);
         vec3 maskedBuiltIn = maskedReflColor.rgb + maskedSpecular.rgb + v_diffuse.rgb + (fres * maskedColor.rgb);
         vec3 maskedTextured = maskedReflColor.rgb + maskedSpecular.rgb + ((v_diffuse.rgb + fres) * maskedColor.rgb);
-        result.rgb = ((maskedBuiltIn * (1.0 - u_luShaderFlags.x)) + (maskedTextured * u_luShaderFlags.x)) * u_luLightColorShadow.a * shadowVisibility(v_worldPos.xyz);
+        result.rgb = ((maskedBuiltIn * (1.0 - u_luShaderFlags.x)) + (maskedTextured * u_luShaderFlags.x)) * u_luLightColorShadow.a * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
         result.rgb = mix(result.rgb, calculatePbrColor(maskedColor.rgb, normal, viewVector, v_reflectVector, v_diffuse.rgb, v_worldPos.xyz, maskColor.a * reflectionEnabled), u_luPbrParams.x);
         result.a = maskedColor.a * u_luLightDirFade.w;
 
@@ -255,7 +255,7 @@ void main()
     float faceCreate = isVariant(LEGOPP_VARIANT_FACE_CREATE);
     if (faceCreate > 0.5) {
         vec4 faceColor = texColor * v_color0;
-        result.rgb = (reflColor.rgb + specular.rgb + ((v_diffuse.rgb + fres) * faceColor.rgb)) * u_luLightColorShadow.a * shadowVisibility(v_worldPos.xyz);
+        result.rgb = (reflColor.rgb + specular.rgb + ((v_diffuse.rgb + fres) * faceColor.rgb)) * u_luLightColorShadow.a * shadowVisibilityWithNormal(v_worldPos.xyz, normal);
         result.rgb = mix(result.rgb, calculatePbrColor(faceColor.rgb, normal, viewVector, v_reflectVector, v_diffuse.rgb, v_worldPos.xyz, reflectionEnabled), u_luPbrParams.x);
         result.a = faceColor.a * u_luLightDirFade.w;
     }

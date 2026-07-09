@@ -168,7 +168,9 @@ struct ScreenSpaceSettings {
 struct ShadowSettings {
     bool directional_shadows_enabled = false;
     float pcss_light_radius = 0.035f;
-    float pcss_bias = 0.01f;
+    float pcss_bias = 0.001f;
+    float pcss_normal_bias = 2.0f;
+    float pcss_slope_bias = 4.0f;
 };
 
 struct ReflectionProbeSettings {
