@@ -4,6 +4,8 @@ $input v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_di
 
 SAMPLER2D(s_diffuse, 0);
 
+#include "shadow_common.sh"
+
 uniform vec4 u_luLightDirFade;
 uniform vec4 u_luCameraPos;
 uniform vec4 u_luFogColor;
@@ -28,5 +30,5 @@ void main()
         discard;
     }
 
-    gl_FragColor = vec4(applyLuFog(color.rgb, v_worldPos.xyz), color.a);
+    gl_FragColor = vec4(applyLuFog(color.rgb * shadowVisibility(v_worldPos.xyz), v_worldPos.xyz), color.a);
 }

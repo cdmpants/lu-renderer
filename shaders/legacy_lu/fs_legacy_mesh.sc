@@ -1,8 +1,10 @@
-$input v_normal, v_texcoord0, v_color0, v_worldPos
+$input v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos
 
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_diffuse, 0);
+
+#include "shadow_common.sh"
 
 uniform vec4 u_materialDiffuse;
 uniform vec4 u_lightDirAmbient;
@@ -30,6 +32,6 @@ void main()
     if (u_luShaderFlags.w >= 0.0 && color.a < u_luShaderFlags.w) {
         discard;
     }
-    vec3 rgb = color.rgb * lit;
+    vec3 rgb = color.rgb * lit * shadowVisibility(v_worldPos.xyz);
     gl_FragColor = vec4(applyLuFog(rgb, v_worldPos.xyz), color.a);
 }

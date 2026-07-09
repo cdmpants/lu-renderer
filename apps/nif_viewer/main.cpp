@@ -24,10 +24,12 @@
 
 #if defined(_WIN32)
 #include <commdlg.h>
+#include <commctrl.h>
 #include <windows.h>
 #endif
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cstdarg>
@@ -38,6 +40,7 @@
 #include <fstream>
 #include <iostream>
 #include <limits>
+#include <cmath>
 #include <string>
 
 using lu::renderer::MeshAsset;
@@ -64,8 +67,11 @@ struct Args {
     std::filesystem::path animation_path;
     std::filesystem::path nif_path;
     std::filesystem::path screenshot_path;
+    RenderFeatureSettings features;
     uint32_t exit_after_frames = 0;
     bool hidden = false;
+    bool transparent_test_scene = false;
+    bool bgfx_device_debug = false;
 };
 
 struct InputState {
@@ -75,7 +81,6 @@ struct InputState {
     double last_x = 0.0;
     double last_y = 0.0;
     OrbitCamera* camera = nullptr;
-    RenderFeatureSettings features;
 };
 
 struct AppState {
@@ -83,6 +88,7 @@ struct AppState {
     BgfxRenderer* renderer = nullptr;
     RenderWorld* world = nullptr;
     OrbitCamera* camera = nullptr;
+    RenderFeatureSettings features;
     InputState input;
     std::filesystem::path pending_import;
     std::filesystem::path pending_lvl_import;
@@ -116,10 +122,100 @@ Args parseArgs(int argc, char** argv) {
             args.nif_path = argv[++i];
         } else if (arg == "--screenshot" && i + 1 < argc) {
             args.screenshot_path = argv[++i];
+        } else if (arg == "--msaa" && i + 1 < argc) {
+            args.features.msaa.enabled = true;
+            args.features.msaa.samples = static_cast<uint8_t>(std::clamp(std::strtoul(argv[++i], nullptr, 10), 1ul, 16ul));
+        } else if (arg == "--no-msaa") {
+            args.features.msaa.enabled = false;
+        } else if (arg == "--pbr") {
+            args.features.lego_surface_model = SurfaceModel::PBR;
+        } else if (arg == "--no-pbr") {
+            args.features.lego_surface_model = SurfaceModel::LegacyLU;
+        } else if (arg == "--pbr-roughness" && i + 1 < argc) {
+            args.features.lego_surface_model = SurfaceModel::PBR;
+            args.features.pbr.roughness = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--pbr-metallic" && i + 1 < argc) {
+            args.features.lego_surface_model = SurfaceModel::PBR;
+            args.features.pbr.metallic = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--pbr-specular" && i + 1 < argc) {
+            args.features.lego_surface_model = SurfaceModel::PBR;
+            args.features.pbr.specular_intensity = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--vignette" && i + 1 < argc) {
+            args.features.post.vignette_enabled = true;
+            args.features.post.vignette_strength = std::strtof(argv[++i], nullptr);
+        } else if ((arg == "--color-lut" || arg == "--lut") && i + 1 < argc) {
+            args.features.post.color_lut_enabled = true;
+            args.features.post.color_lut_path = argv[++i];
+        } else if (arg == "--no-color-lut" || arg == "--no-lut") {
+            args.features.post.color_lut_enabled = false;
+        } else if ((arg == "--color-lut-intensity" || arg == "--lut-intensity") && i + 1 < argc) {
+            args.features.post.color_lut_enabled = true;
+            args.features.post.color_lut_intensity = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--film-grain" && i + 1 < argc) {
+            args.features.post.film_grain_enabled = true;
+            args.features.post.film_grain_strength = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--taa") {
+            args.features.post.taa_enabled = true;
+        } else if (arg == "--no-taa") {
+            args.features.post.taa_enabled = false;
+        } else if (arg == "--taa-feedback" && i + 1 < argc) {
+            args.features.post.taa_enabled = true;
+            args.features.post.taa_feedback = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--taa-jitter" && i + 1 < argc) {
+            args.features.post.taa_enabled = true;
+            args.features.post.taa_jitter = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--ssr" && i + 1 < argc) {
+            args.features.screen_space.ssr_enabled = true;
+            args.features.screen_space.ssr_strength = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--ssr-max-distance" && i + 1 < argc) {
+            args.features.screen_space.ssr_enabled = true;
+            args.features.screen_space.ssr_max_distance = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--ssr-thickness" && i + 1 < argc) {
+            args.features.screen_space.ssr_enabled = true;
+            args.features.screen_space.ssr_thickness = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--bloom" && i + 1 < argc) {
+            args.features.post.bloom_enabled = true;
+            args.features.post.bloom_intensity = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--bloom-threshold" && i + 1 < argc) {
+            args.features.post.bloom_enabled = true;
+            args.features.post.bloom_threshold = std::strtof(argv[++i], nullptr);
+        } else if ((arg == "--dof" || arg == "--dof-aperture") && i + 1 < argc) {
+            args.features.post.dof_enabled = true;
+            args.features.post.dof_aperture = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--dof-focus" && i + 1 < argc) {
+            args.features.post.dof_enabled = true;
+            args.features.post.dof_focus_distance = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--gtao" && i + 1 < argc) {
+            args.features.screen_space.gtao_enabled = true;
+            args.features.screen_space.gtao_intensity = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--gtao-radius" && i + 1 < argc) {
+            args.features.screen_space.gtao_enabled = true;
+            args.features.screen_space.gtao_radius = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--shadows") {
+            args.features.shadows.directional_shadows_enabled = true;
+        } else if (arg == "--no-shadows") {
+            args.features.shadows.directional_shadows_enabled = false;
+        } else if (arg == "--pcss-radius" && i + 1 < argc) {
+            args.features.shadows.directional_shadows_enabled = true;
+            args.features.shadows.pcss_light_radius = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--pcss-bias" && i + 1 < argc) {
+            args.features.shadows.directional_shadows_enabled = true;
+            args.features.shadows.pcss_bias = std::strtof(argv[++i], nullptr);
+        } else if (arg == "--reflection-probe" || arg == "--probes") {
+            args.features.reflection_probe.enabled = true;
+        } else if (arg == "--no-reflection-probe" || arg == "--no-probes") {
+            args.features.reflection_probe.enabled = false;
+        } else if (arg == "--probe-intensity" && i + 1 < argc) {
+            args.features.reflection_probe.enabled = true;
+            args.features.reflection_probe.intensity = std::strtof(argv[++i], nullptr);
         } else if ((arg == "--exit-after-frames" || arg == "--frames") && i + 1 < argc) {
             args.exit_after_frames = static_cast<uint32_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (arg == "--hidden") {
             args.hidden = true;
+        } else if (arg == "--transparent-test-scene") {
+            args.transparent_test_scene = true;
+        } else if (arg == "--bgfx-device-debug") {
+            args.bgfx_device_debug = true;
         } else if (args.nif_path.empty()) {
             args.nif_path = arg;
         }
@@ -495,6 +591,54 @@ RenderWorld makeCubeWorld() {
     return world;
 }
 
+RenderWorld makeTransparentTestWorld() {
+    RenderWorld world = makeCubeWorld();
+    world.source_asset_path = "<transparent-test-scene>";
+    world.meshes.front().name = "Opaque Depth Reference";
+    world.meshes.front().material.diffuse = {0.38f, 0.42f, 0.48f, 1.0f};
+
+    auto vertex = [](Vec3 position, Vec3 normal, lu::renderer::Vec2 uv, uint32_t color_rgba) {
+        Vertex v;
+        v.position = position;
+        v.normal = normal;
+        v.uv = uv;
+        v.uv2 = uv;
+        v.color_rgba8 = color_rgba;
+        return v;
+    };
+    auto makePane = [&](const char* name, float z, uint32_t color_rgba) {
+        MeshAsset pane;
+        pane.name = name;
+        pane.material.name = name;
+        pane.material.shader_family = LegacyShaderFamily::AlphaAsAlpha;
+        pane.material.alpha_mode = RenderAlphaMode::AlphaBlend;
+        pane.material.alpha_blend = true;
+        pane.material.depth_write = false;
+        pane.material.cull_mode = RenderCullMode::TwoSided;
+        pane.material.diffuse = {1.0f, 1.0f, 1.0f, 0.55f};
+        pane.material.lu_shader_uses_texture = false;
+        pane.material.lu_shader_uses_vertex_color = true;
+        pane.material.lu_shader_uses_material_diffuse = false;
+        pane.material.lu_shader_uses_lighting = false;
+        pane.material.lu_shader_uses_fog = false;
+        pane.material.lu_shader_uses_specular = false;
+        pane.material.lu_shader_uses_reflection = false;
+        pane.material.lu_shader_port_status = lu::renderer::ShaderPortStatus::Verified;
+        pane.vertices = {
+            vertex({-1.25f, -0.95f, z}, {0.0f, 0.0f, 1.0f}, {0.0f, 1.0f}, color_rgba),
+            vertex({ 1.25f, -0.95f, z}, {0.0f, 0.0f, 1.0f}, {1.0f, 1.0f}, color_rgba),
+            vertex({ 1.25f,  0.95f, z}, {0.0f, 0.0f, 1.0f}, {1.0f, 0.0f}, color_rgba),
+            vertex({-1.25f,  0.95f, z}, {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f}, color_rgba)
+        };
+        pane.indices = {0, 2, 1, 0, 3, 2};
+        return pane;
+    };
+
+    world.meshes.push_back(makePane("Far Transparent Blue", 0.35f, color(0.15f, 0.45f, 1.0f, 0.55f)));
+    world.meshes.push_back(makePane("Near Transparent Amber", -0.35f, color(1.0f, 0.55f, 0.12f, 0.55f)));
+    return world;
+}
+
 void frameWorld(const RenderWorld& world, OrbitCamera& camera) {
     Vec3 min_v{
         std::numeric_limits<float>::max(),
@@ -675,6 +819,70 @@ constexpr int kEditPcssRadius = 3199;
 constexpr int kEditPcssBias = 3200;
 constexpr int kGraphicsProbesEnabled = 3201;
 constexpr int kEditProbeIntensity = 3202;
+constexpr int kEditPbrRoughness = 3203;
+constexpr int kEditPbrMetallic = 3204;
+constexpr int kEditPbrSpecular = 3205;
+constexpr int kGraphicsColorLutEnabled = 3206;
+constexpr int kEditColorLutIntensity = 3207;
+constexpr int kEditColorLutPath = 3208;
+constexpr int kEditSsrMaxDistance = 3209;
+constexpr int kEditSsrThickness = 3210;
+constexpr int kGraphicsBrowseColorLut = 3211;
+constexpr int kGraphicsTaaEnabled = 3212;
+constexpr int kEditTaaFeedback = 3213;
+constexpr int kEditTaaJitter = 3214;
+constexpr int kSliderPbrRoughness = 3300;
+constexpr int kSliderPbrMetallic = 3301;
+constexpr int kSliderPbrSpecular = 3302;
+constexpr int kSliderSsrStrength = 3303;
+constexpr int kSliderGtaoRadius = 3304;
+constexpr int kSliderGtaoIntensity = 3305;
+constexpr int kSliderBloomThreshold = 3306;
+constexpr int kSliderBloomIntensity = 3307;
+constexpr int kSliderColorLutIntensity = 3308;
+constexpr int kSliderVignetteStrength = 3309;
+constexpr int kSliderDofFocus = 3310;
+constexpr int kSliderDofAperture = 3311;
+constexpr int kSliderFilmGrainStrength = 3312;
+constexpr int kSliderPcssRadius = 3313;
+constexpr int kSliderPcssBias = 3314;
+constexpr int kSliderProbeIntensity = 3315;
+constexpr int kSliderSsrMaxDistance = 3316;
+constexpr int kSliderSsrThickness = 3317;
+constexpr int kSliderTaaFeedback = 3318;
+constexpr int kSliderTaaJitter = 3319;
+
+struct SliderBinding {
+    int slider_id;
+    int edit_id;
+    float min_value;
+    float max_value;
+};
+
+constexpr std::array<SliderBinding, 20> kGraphicsSliders = {{
+    {kSliderPbrRoughness, kEditPbrRoughness, 0.04f, 1.0f},
+    {kSliderPbrMetallic, kEditPbrMetallic, 0.0f, 1.0f},
+    {kSliderPbrSpecular, kEditPbrSpecular, 0.0f, 3.0f},
+    {kSliderSsrStrength, kEditSsrStrength, 0.0f, 1.5f},
+    {kSliderSsrMaxDistance, kEditSsrMaxDistance, 1.0f, 100.0f},
+    {kSliderSsrThickness, kEditSsrThickness, 0.001f, 0.12f},
+    {kSliderGtaoRadius, kEditGtaoRadius, 0.1f, 5.0f},
+    {kSliderGtaoIntensity, kEditGtaoIntensity, 0.0f, 3.0f},
+    {kSliderBloomThreshold, kEditBloomThreshold, 0.0f, 2.0f},
+    {kSliderBloomIntensity, kEditBloomIntensity, 0.0f, 3.0f},
+    {kSliderColorLutIntensity, kEditColorLutIntensity, 0.0f, 1.0f},
+    {kSliderVignetteStrength, kEditVignetteStrength, 0.0f, 1.0f},
+    {kSliderDofFocus, kEditDofFocus, 0.1f, 100.0f},
+    {kSliderDofAperture, kEditDofAperture, 0.0f, 1.0f},
+    {kSliderFilmGrainStrength, kEditFilmGrainStrength, 0.0f, 0.15f},
+    {kSliderTaaFeedback, kEditTaaFeedback, 0.0f, 0.98f},
+    {kSliderTaaJitter, kEditTaaJitter, 0.0f, 2.0f},
+    {kSliderPcssRadius, kEditPcssRadius, 0.0f, 0.2f},
+    {kSliderPcssBias, kEditPcssBias, 0.0f, 0.08f},
+    {kSliderProbeIntensity, kEditProbeIntensity, 0.0f, 3.0f}
+}};
+
+constexpr int kSliderSteps = 1000;
 
 std::filesystem::path openFileDialog(HWND owner, const Args& args, const wchar_t* filter,
                                      const wchar_t* title, const std::filesystem::path& preferred_path) {
@@ -720,6 +928,13 @@ std::filesystem::path openAnimationDialog(HWND owner, const Args& args) {
                           L"Import Animation", args.animation_path);
 }
 
+std::filesystem::path openColorLutDialog(HWND owner, const Args& args, const std::string& current_path) {
+    std::filesystem::path preferred_path = current_path.empty() ? args.client_root : std::filesystem::path(current_path);
+    return openFileDialog(owner, args,
+                          L"DDS LUT files (*.dds)\0*.dds\0DDS files (*.DDS)\0*.DDS\0All files (*.*)\0*.*\0\0",
+                          L"Select Color LUT", preferred_path);
+}
+
 void setEditFloat(HWND window, int id, float value) {
     wchar_t text[64] = {};
     std::swprintf(text, std::size(text), L"%.6g", static_cast<double>(value));
@@ -752,6 +967,18 @@ uint32_t getEditUInt(HWND window, int id, uint32_t fallback) {
     return end == text ? fallback : static_cast<uint32_t>(value);
 }
 
+void setEditString(HWND window, int id, const std::string& value) {
+    SetDlgItemTextW(window, id, std::filesystem::path(value).wstring().c_str());
+}
+
+std::string getEditString(HWND window, int id, const std::string& fallback) {
+    wchar_t text[1024] = {};
+    if (GetDlgItemTextW(window, id, text, static_cast<int>(std::size(text))) <= 0) {
+        return fallback;
+    }
+    return std::filesystem::path(text).string();
+}
+
 void setCheckbox(HWND window, int id, bool enabled) {
     SendDlgItemMessageW(window, id, BM_SETCHECK, enabled ? BST_CHECKED : BST_UNCHECKED, 0);
 }
@@ -769,6 +996,53 @@ void createEdit(HWND window, int id, int x, int y) {
     CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
                     x, y, 72, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
                     GetModuleHandleW(nullptr), nullptr);
+}
+
+void createEditWide(HWND window, int id, int x, int y, int w) {
+    CreateWindowExW(WS_EX_CLIENTEDGE, L"EDIT", L"", WS_CHILD | WS_VISIBLE | WS_TABSTOP | ES_AUTOHSCROLL,
+                    x, y, w, 22, window, reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                    GetModuleHandleW(nullptr), nullptr);
+}
+
+const SliderBinding* findSliderBindingBySlider(int slider_id) {
+    for (const SliderBinding& binding : kGraphicsSliders) {
+        if (binding.slider_id == slider_id) {
+            return &binding;
+        }
+    }
+    return nullptr;
+}
+
+int sliderPositionFromValue(const SliderBinding& binding, float value) {
+    const float t = (std::clamp(value, binding.min_value, binding.max_value) - binding.min_value) /
+                    std::max(binding.max_value - binding.min_value, 0.0001f);
+    return static_cast<int>(std::lround(t * static_cast<float>(kSliderSteps)));
+}
+
+float sliderValueFromPosition(const SliderBinding& binding, int position) {
+    const float t = std::clamp(static_cast<float>(position) / static_cast<float>(kSliderSteps), 0.0f, 1.0f);
+    return binding.min_value + (binding.max_value - binding.min_value) * t;
+}
+
+void setSliderFloat(HWND window, int slider_id, float value) {
+    const SliderBinding* binding = findSliderBindingBySlider(slider_id);
+    if (!binding) return;
+    SendDlgItemMessageW(window, slider_id, TBM_SETPOS, TRUE, sliderPositionFromValue(*binding, value));
+}
+
+void setEditAndSliderFloat(HWND window, int edit_id, int slider_id, float value) {
+    setEditFloat(window, edit_id, value);
+    setSliderFloat(window, slider_id, value);
+}
+
+void createSlider(HWND window, int id, int x, int y, int w) {
+    HWND slider = CreateWindowExW(0, TRACKBAR_CLASSW, L"",
+                                  WS_CHILD | WS_VISIBLE | WS_TABSTOP | TBS_AUTOTICKS,
+                                  x, y, w, 28, window,
+                                  reinterpret_cast<HMENU>(static_cast<INT_PTR>(id)),
+                                  GetModuleHandleW(nullptr), nullptr);
+    SendMessageW(slider, TBM_SETRANGE, TRUE, MAKELPARAM(0, kSliderSteps));
+    SendMessageW(slider, TBM_SETTICFREQ, 100, 0);
 }
 
 void createCheckbox(HWND window, int id, const wchar_t* text, int x, int y, int w = 150) {
@@ -813,6 +1087,43 @@ void populateLightingControls(HWND window, const EnvironmentState& env) {
     setEditFloat(window, kEditFogNear, env.fog_near);
     setEditFloat(window, kEditFogFar, env.fog_far);
     SendDlgItemMessageW(window, kLightingFogEnabled, BM_SETCHECK, env.fog_enabled ? BST_CHECKED : BST_UNCHECKED, 0);
+}
+
+void populateGraphicsControls(HWND window, const RenderFeatureSettings& features) {
+    setCheckbox(window, kGraphicsMsaaEnabled, features.msaa.enabled);
+    setEditUInt(window, kEditMsaaSamples, features.msaa.samples);
+    setCheckbox(window, kGraphicsPbrEnabled, features.lego_surface_model == SurfaceModel::PBR);
+    setEditAndSliderFloat(window, kEditPbrRoughness, kSliderPbrRoughness, features.pbr.roughness);
+    setEditAndSliderFloat(window, kEditPbrMetallic, kSliderPbrMetallic, features.pbr.metallic);
+    setEditAndSliderFloat(window, kEditPbrSpecular, kSliderPbrSpecular, features.pbr.specular_intensity);
+    setCheckbox(window, kGraphicsSsrEnabled, features.screen_space.ssr_enabled);
+    setEditAndSliderFloat(window, kEditSsrStrength, kSliderSsrStrength, features.screen_space.ssr_strength);
+    setEditAndSliderFloat(window, kEditSsrMaxDistance, kSliderSsrMaxDistance, features.screen_space.ssr_max_distance);
+    setEditAndSliderFloat(window, kEditSsrThickness, kSliderSsrThickness, features.screen_space.ssr_thickness);
+    setCheckbox(window, kGraphicsGtaoEnabled, features.screen_space.gtao_enabled);
+    setEditAndSliderFloat(window, kEditGtaoRadius, kSliderGtaoRadius, features.screen_space.gtao_radius);
+    setEditAndSliderFloat(window, kEditGtaoIntensity, kSliderGtaoIntensity, features.screen_space.gtao_intensity);
+    setCheckbox(window, kGraphicsBloomEnabled, features.post.bloom_enabled);
+    setEditAndSliderFloat(window, kEditBloomThreshold, kSliderBloomThreshold, features.post.bloom_threshold);
+    setEditAndSliderFloat(window, kEditBloomIntensity, kSliderBloomIntensity, features.post.bloom_intensity);
+    setCheckbox(window, kGraphicsColorLutEnabled, features.post.color_lut_enabled);
+    setEditAndSliderFloat(window, kEditColorLutIntensity, kSliderColorLutIntensity, features.post.color_lut_intensity);
+    setEditString(window, kEditColorLutPath, features.post.color_lut_path);
+    setCheckbox(window, kGraphicsVignetteEnabled, features.post.vignette_enabled);
+    setEditAndSliderFloat(window, kEditVignetteStrength, kSliderVignetteStrength, features.post.vignette_strength);
+    setCheckbox(window, kGraphicsDofEnabled, features.post.dof_enabled);
+    setEditAndSliderFloat(window, kEditDofFocus, kSliderDofFocus, features.post.dof_focus_distance);
+    setEditAndSliderFloat(window, kEditDofAperture, kSliderDofAperture, features.post.dof_aperture);
+    setCheckbox(window, kGraphicsFilmGrainEnabled, features.post.film_grain_enabled);
+    setEditAndSliderFloat(window, kEditFilmGrainStrength, kSliderFilmGrainStrength, features.post.film_grain_strength);
+    setCheckbox(window, kGraphicsTaaEnabled, features.post.taa_enabled);
+    setEditAndSliderFloat(window, kEditTaaFeedback, kSliderTaaFeedback, features.post.taa_feedback);
+    setEditAndSliderFloat(window, kEditTaaJitter, kSliderTaaJitter, features.post.taa_jitter);
+    setCheckbox(window, kGraphicsShadowsEnabled, features.shadows.directional_shadows_enabled);
+    setEditAndSliderFloat(window, kEditPcssRadius, kSliderPcssRadius, features.shadows.pcss_light_radius);
+    setEditAndSliderFloat(window, kEditPcssBias, kSliderPcssBias, features.shadows.pcss_bias);
+    setCheckbox(window, kGraphicsProbesEnabled, features.reflection_probe.enabled);
+    setEditAndSliderFloat(window, kEditProbeIntensity, kSliderProbeIntensity, features.reflection_probe.intensity);
 }
 
 void applyLightingControls(HWND window, AppState& app) {
@@ -863,6 +1174,62 @@ void applyLightingControls(HWND window, AppState& app) {
     app.manual_environment_override = true;
 }
 
+void applyGraphicsControls(HWND window, AppState& app, bool refresh_controls = true) {
+    RenderFeatureSettings features = app.features;
+    features.msaa.enabled = getCheckbox(window, kGraphicsMsaaEnabled);
+    features.msaa.samples = static_cast<uint8_t>(std::clamp(getEditUInt(window, kEditMsaaSamples, features.msaa.samples), 1u, 16u));
+    features.lego_surface_model = getCheckbox(window, kGraphicsPbrEnabled) ? SurfaceModel::PBR : SurfaceModel::LegacyLU;
+    features.pbr.roughness = std::clamp(getEditFloat(window, kEditPbrRoughness, features.pbr.roughness), 0.04f, 1.0f);
+    features.pbr.metallic = std::clamp(getEditFloat(window, kEditPbrMetallic, features.pbr.metallic), 0.0f, 1.0f);
+    features.pbr.specular_intensity = std::max(0.0f, getEditFloat(window, kEditPbrSpecular, features.pbr.specular_intensity));
+    features.screen_space.ssr_enabled = getCheckbox(window, kGraphicsSsrEnabled);
+    features.screen_space.ssr_strength = getEditFloat(window, kEditSsrStrength, features.screen_space.ssr_strength);
+    features.screen_space.ssr_max_distance = std::max(0.1f, getEditFloat(window, kEditSsrMaxDistance, features.screen_space.ssr_max_distance));
+    features.screen_space.ssr_thickness = std::max(0.001f, getEditFloat(window, kEditSsrThickness, features.screen_space.ssr_thickness));
+    features.screen_space.gtao_enabled = getCheckbox(window, kGraphicsGtaoEnabled);
+    features.screen_space.gtao_radius = getEditFloat(window, kEditGtaoRadius, features.screen_space.gtao_radius);
+    features.screen_space.gtao_intensity = getEditFloat(window, kEditGtaoIntensity, features.screen_space.gtao_intensity);
+    features.post.bloom_enabled = getCheckbox(window, kGraphicsBloomEnabled);
+    features.post.bloom_threshold = getEditFloat(window, kEditBloomThreshold, features.post.bloom_threshold);
+    features.post.bloom_intensity = getEditFloat(window, kEditBloomIntensity, features.post.bloom_intensity);
+    features.post.color_lut_enabled = getCheckbox(window, kGraphicsColorLutEnabled);
+    features.post.color_lut_intensity = std::max(0.0f, getEditFloat(window, kEditColorLutIntensity, features.post.color_lut_intensity));
+    features.post.color_lut_path = getEditString(window, kEditColorLutPath, features.post.color_lut_path);
+    features.post.vignette_enabled = getCheckbox(window, kGraphicsVignetteEnabled);
+    features.post.vignette_strength = getEditFloat(window, kEditVignetteStrength, features.post.vignette_strength);
+    features.post.dof_enabled = getCheckbox(window, kGraphicsDofEnabled);
+    features.post.dof_focus_distance = getEditFloat(window, kEditDofFocus, features.post.dof_focus_distance);
+    features.post.dof_aperture = getEditFloat(window, kEditDofAperture, features.post.dof_aperture);
+    features.post.film_grain_enabled = getCheckbox(window, kGraphicsFilmGrainEnabled);
+    features.post.film_grain_strength = getEditFloat(window, kEditFilmGrainStrength, features.post.film_grain_strength);
+    features.post.taa_enabled = getCheckbox(window, kGraphicsTaaEnabled);
+    features.post.taa_feedback = std::clamp(getEditFloat(window, kEditTaaFeedback, features.post.taa_feedback), 0.0f, 0.98f);
+    features.post.taa_jitter = std::clamp(getEditFloat(window, kEditTaaJitter, features.post.taa_jitter), 0.0f, 2.0f);
+    features.shadows.directional_shadows_enabled = getCheckbox(window, kGraphicsShadowsEnabled);
+    features.shadows.pcss_light_radius = getEditFloat(window, kEditPcssRadius, features.shadows.pcss_light_radius);
+    features.shadows.pcss_bias = getEditFloat(window, kEditPcssBias, features.shadows.pcss_bias);
+    features.reflection_probe.enabled = getCheckbox(window, kGraphicsProbesEnabled);
+    features.reflection_probe.intensity = getEditFloat(window, kEditProbeIntensity, features.reflection_probe.intensity);
+
+    app.features = features;
+    if (app.renderer) {
+        app.renderer->setFeatureSettings(app.features);
+    }
+    if (refresh_controls) {
+        populateGraphicsControls(window, app.features);
+    }
+}
+
+void applySliderControl(HWND window, AppState& app, HWND slider_window) {
+    const int slider_id = GetDlgCtrlID(slider_window);
+    const SliderBinding* binding = findSliderBindingBySlider(slider_id);
+    if (!binding) return;
+
+    const int position = static_cast<int>(SendMessageW(slider_window, TBM_GETPOS, 0, 0));
+    setEditFloat(window, binding->edit_id, sliderValueFromPosition(*binding, position));
+    applyGraphicsControls(window, app, false);
+}
+
 LRESULT CALLBACK lightingWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM lparam) {
     auto* app = reinterpret_cast<AppState*>(GetWindowLongPtrW(hwnd, GWLP_USERDATA));
     switch (message) {
@@ -886,22 +1253,143 @@ LRESULT CALLBACK lightingWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM 
         createEdit(hwnd, kEditFogNear, 166, 258);
         createLabel(hwnd, L"Far", 250, 261, 28, 18);
         createEdit(hwnd, kEditFogFar, 284, 258);
+        createLabel(hwnd, L"Graphics", 12, 338, 110, 18);
+        createCheckbox(hwnd, kGraphicsMsaaEnabled, L"MSAA", 12, 366, 75);
+        createLabel(hwnd, L"Samples", 128, 369, 56, 18);
+        createEdit(hwnd, kEditMsaaSamples, 190, 366);
+        createCheckbox(hwnd, kGraphicsPbrEnabled, L"PBR Lego BRDF", 282, 366, 140);
+        createLabel(hwnd, L"Rough", 12, 399, 80, 18);
+        createEdit(hwnd, kEditPbrRoughness, 128, 396);
+        createSlider(hwnd, kSliderPbrRoughness, 210, 393, 250);
+        createLabel(hwnd, L"Metal", 12, 429, 80, 18);
+        createEdit(hwnd, kEditPbrMetallic, 128, 426);
+        createSlider(hwnd, kSliderPbrMetallic, 210, 423, 250);
+        createLabel(hwnd, L"Spec", 12, 459, 80, 18);
+        createEdit(hwnd, kEditPbrSpecular, 128, 456);
+        createSlider(hwnd, kSliderPbrSpecular, 210, 453, 250);
+        createCheckbox(hwnd, kGraphicsSsrEnabled, L"SSR", 12, 486, 75);
+        createLabel(hwnd, L"Strength", 128, 489, 72, 18);
+        createEdit(hwnd, kEditSsrStrength, 210, 486);
+        createSlider(hwnd, kSliderSsrStrength, 292, 483, 250);
+        createLabel(hwnd, L"Max Dist", 128, 519, 72, 18);
+        createEdit(hwnd, kEditSsrMaxDistance, 210, 516);
+        createSlider(hwnd, kSliderSsrMaxDistance, 292, 513, 250);
+        createLabel(hwnd, L"Thickness", 128, 549, 72, 18);
+        createEdit(hwnd, kEditSsrThickness, 210, 546);
+        createSlider(hwnd, kSliderSsrThickness, 292, 543, 250);
+        createCheckbox(hwnd, kGraphicsGtaoEnabled, L"GTAO", 12, 576, 75);
+        createLabel(hwnd, L"Radius", 128, 579, 72, 18);
+        createEdit(hwnd, kEditGtaoRadius, 210, 576);
+        createSlider(hwnd, kSliderGtaoRadius, 292, 573, 250);
+        createLabel(hwnd, L"AO Int", 128, 609, 72, 18);
+        createEdit(hwnd, kEditGtaoIntensity, 210, 606);
+        createSlider(hwnd, kSliderGtaoIntensity, 292, 603, 250);
+        createCheckbox(hwnd, kGraphicsBloomEnabled, L"Bloom", 12, 636, 75);
+        createLabel(hwnd, L"Threshold", 128, 639, 72, 18);
+        createEdit(hwnd, kEditBloomThreshold, 210, 636);
+        createSlider(hwnd, kSliderBloomThreshold, 292, 633, 250);
+        createLabel(hwnd, L"Intensity", 128, 669, 72, 18);
+        createEdit(hwnd, kEditBloomIntensity, 210, 666);
+        createSlider(hwnd, kSliderBloomIntensity, 292, 663, 250);
+        createCheckbox(hwnd, kGraphicsColorLutEnabled, L"LUT", 12, 696, 60);
+        createLabel(hwnd, L"Intensity", 128, 699, 72, 18);
+        createEdit(hwnd, kEditColorLutIntensity, 210, 696);
+        createSlider(hwnd, kSliderColorLutIntensity, 292, 693, 250);
+        createLabel(hwnd, L"LUT Path", 128, 729, 72, 18);
+        createEditWide(hwnd, kEditColorLutPath, 210, 726, 252);
+        CreateWindowExW(0, L"BUTTON", L"Browse", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
+                        470, 725, 72, 24, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kGraphicsBrowseColorLut)),
+                        GetModuleHandleW(nullptr), nullptr);
+        createCheckbox(hwnd, kGraphicsVignetteEnabled, L"Vignette", 12, 756, 100);
+        createLabel(hwnd, L"Strength", 128, 759, 72, 18);
+        createEdit(hwnd, kEditVignetteStrength, 210, 756);
+        createSlider(hwnd, kSliderVignetteStrength, 292, 753, 250);
+        createCheckbox(hwnd, kGraphicsDofEnabled, L"DoF", 12, 786, 60);
+        createLabel(hwnd, L"Focus", 128, 789, 72, 18);
+        createEdit(hwnd, kEditDofFocus, 210, 786);
+        createSlider(hwnd, kSliderDofFocus, 292, 783, 250);
+        createLabel(hwnd, L"Aperture", 128, 819, 72, 18);
+        createEdit(hwnd, kEditDofAperture, 210, 816);
+        createSlider(hwnd, kSliderDofAperture, 292, 813, 250);
+        createCheckbox(hwnd, kGraphicsFilmGrainEnabled, L"Film Grain", 12, 846, 100);
+        createLabel(hwnd, L"Strength", 128, 849, 72, 18);
+        createEdit(hwnd, kEditFilmGrainStrength, 210, 846);
+        createSlider(hwnd, kSliderFilmGrainStrength, 292, 843, 250);
+        createCheckbox(hwnd, kGraphicsTaaEnabled, L"TAA", 12, 876, 75);
+        createLabel(hwnd, L"Feedback", 128, 879, 72, 18);
+        createEdit(hwnd, kEditTaaFeedback, 210, 876);
+        createSlider(hwnd, kSliderTaaFeedback, 292, 873, 250);
+        createLabel(hwnd, L"Jitter", 128, 909, 72, 18);
+        createEdit(hwnd, kEditTaaJitter, 210, 906);
+        createSlider(hwnd, kSliderTaaJitter, 292, 903, 250);
+        createCheckbox(hwnd, kGraphicsShadowsEnabled, L"PCSS Shadows", 12, 936, 120);
+        createLabel(hwnd, L"Radius", 128, 939, 72, 18);
+        createEdit(hwnd, kEditPcssRadius, 210, 936);
+        createSlider(hwnd, kSliderPcssRadius, 292, 933, 250);
+        createLabel(hwnd, L"Bias", 128, 969, 72, 18);
+        createEdit(hwnd, kEditPcssBias, 210, 966);
+        createSlider(hwnd, kSliderPcssBias, 292, 963, 250);
+        createCheckbox(hwnd, kGraphicsProbesEnabled, L"Reflection Probe", 12, 996, 135);
+        createLabel(hwnd, L"Intensity", 166, 999, 72, 18);
+        createEdit(hwnd, kEditProbeIntensity, 248, 996);
+        createSlider(hwnd, kSliderProbeIntensity, 330, 993, 212);
         CreateWindowExW(0, L"BUTTON", L"Apply", WS_CHILD | WS_VISIBLE | WS_TABSTOP | BS_DEFPUSHBUTTON,
-                        246, 300, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingApply)),
+                        368, 1036, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingApply)),
                         GetModuleHandleW(nullptr), nullptr);
         CreateWindowExW(0, L"BUTTON", L"Close", WS_CHILD | WS_VISIBLE | WS_TABSTOP,
-                        338, 300, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingClose)),
+                        460, 1036, 82, 28, hwnd, reinterpret_cast<HMENU>(static_cast<INT_PTR>(kLightingClose)),
                         GetModuleHandleW(nullptr), nullptr);
         if (app && app->world) populateLightingControls(hwnd, app->world->environment);
+        if (app) populateGraphicsControls(hwnd, app->features);
         return 0;
     }
     case WM_COMMAND:
         if (LOWORD(wparam) == kLightingApply) {
-            if (app) applyLightingControls(hwnd, *app);
+            if (app) {
+                applyLightingControls(hwnd, *app);
+                applyGraphicsControls(hwnd, *app);
+            }
             return 0;
         }
         if (LOWORD(wparam) == kLightingClose) {
             DestroyWindow(hwnd);
+            return 0;
+        }
+        if (LOWORD(wparam) == kGraphicsBrowseColorLut) {
+            if (app && app->args) {
+                std::filesystem::path selected = openColorLutDialog(hwnd, *app->args, app->features.post.color_lut_path);
+                if (!selected.empty()) {
+                    setCheckbox(hwnd, kGraphicsColorLutEnabled, true);
+                    setEditString(hwnd, kEditColorLutPath, selected.string());
+                    applyGraphicsControls(hwnd, *app, false);
+                }
+            }
+            return 0;
+        }
+        if (app && HIWORD(wparam) == BN_CLICKED) {
+            switch (LOWORD(wparam)) {
+            case kGraphicsMsaaEnabled:
+            case kGraphicsPbrEnabled:
+            case kGraphicsSsrEnabled:
+            case kGraphicsGtaoEnabled:
+            case kGraphicsBloomEnabled:
+            case kGraphicsColorLutEnabled:
+            case kGraphicsVignetteEnabled:
+            case kGraphicsDofEnabled:
+            case kGraphicsFilmGrainEnabled:
+            case kGraphicsTaaEnabled:
+            case kGraphicsShadowsEnabled:
+            case kGraphicsProbesEnabled:
+                applyGraphicsControls(hwnd, *app, false);
+                return 0;
+            default:
+                break;
+            }
+        }
+        break;
+    case WM_HSCROLL:
+        if (app && reinterpret_cast<HWND>(lparam)) {
+            applySliderControl(hwnd, *app, reinterpret_cast<HWND>(lparam));
             return 0;
         }
         break;
@@ -918,8 +1406,14 @@ LRESULT CALLBACK lightingWndProc(HWND hwnd, UINT message, WPARAM wparam, LPARAM 
 }
 
 void showLightingWindow(HWND owner, AppState& app) {
+    INITCOMMONCONTROLSEX icc{};
+    icc.dwSize = sizeof(icc);
+    icc.dwICC = ICC_BAR_CLASSES;
+    InitCommonControlsEx(&icc);
+
     if (app.lighting_window) {
         if (app.world) populateLightingControls(app.lighting_window, app.world->environment);
+        populateGraphicsControls(app.lighting_window, app.features);
         ShowWindow(app.lighting_window, SW_SHOWNORMAL);
         SetForegroundWindow(app.lighting_window);
         return;
@@ -940,9 +1434,9 @@ void showLightingWindow(HWND owner, AppState& app) {
     app.lighting_window = CreateWindowExW(
         WS_EX_TOOLWINDOW,
         L"LuRendererLightingFogWindow",
-        L"Lighting / Fog",
+        L"Lighting / Fog / Graphics",
         WS_OVERLAPPED | WS_CAPTION | WS_SYSMENU,
-        CW_USEDEFAULT, CW_USEDEFAULT, 450, 380,
+        CW_USEDEFAULT, CW_USEDEFAULT, 580, 1120,
         owner,
         nullptr,
         GetModuleHandleW(nullptr),
@@ -1187,12 +1681,15 @@ int main(int argc, char** argv) {
 
     ViewerBgfxCallback callback;
     BgfxRenderer renderer;
+    RenderFeatureSettings features = args.features;
     RendererInit init;
     init.native_window = nativeWindow(window);
     init.native_display = nativeDisplay();
     init.callback = &callback;
     init.width = static_cast<uint32_t>(width);
     init.height = static_cast<uint32_t>(height);
+    init.bgfx_device_debug = args.bgfx_device_debug;
+    init.features = features;
     if (!renderer.init(init)) {
         std::cerr << renderer.lastError() << "\n";
         glfwDestroyWindow(window);
@@ -1201,7 +1698,10 @@ int main(int argc, char** argv) {
     }
 
     RenderWorld world;
-    if (!args.nif_path.empty()) {
+    if (args.transparent_test_scene) {
+        std::cout << "Showing synthetic transparent test scene.\n";
+        world = makeTransparentTestWorld();
+    } else if (!args.nif_path.empty()) {
         if (!loadNifWorld(args.nif_path, args, world)) {
             world = makeCubeWorld();
         }
@@ -1226,6 +1726,7 @@ int main(int argc, char** argv) {
     app.renderer = &renderer;
     app.world = &world;
     app.camera = &camera;
+    app.features = features;
     app.input.camera = &camera;
     glfwSetWindowUserPointer(window, &app);
     if (!args.hidden) {

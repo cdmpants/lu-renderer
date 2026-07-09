@@ -137,8 +137,14 @@ struct MsaaSettings {
 };
 
 struct PostProcessSettings {
+    bool taa_enabled = false;
+    float taa_feedback = 0.88f;
+    float taa_jitter = 1.0f;
     bool vignette_enabled = false;
     float vignette_strength = 0.25f;
+    bool color_lut_enabled = false;
+    float color_lut_intensity = 1.0f;
+    std::string color_lut_path;
     bool bloom_enabled = false;
     float bloom_threshold = 0.85f;
     float bloom_intensity = 0.35f;
@@ -153,6 +159,7 @@ struct ScreenSpaceSettings {
     bool ssr_enabled = false;
     float ssr_strength = 0.5f;
     float ssr_max_distance = 40.0f;
+    float ssr_thickness = 0.025f;
     bool gtao_enabled = false;
     float gtao_radius = 1.5f;
     float gtao_intensity = 1.0f;
@@ -161,7 +168,7 @@ struct ScreenSpaceSettings {
 struct ShadowSettings {
     bool directional_shadows_enabled = false;
     float pcss_light_radius = 0.035f;
-    float pcss_bias = 0.002f;
+    float pcss_bias = 0.01f;
 };
 
 struct ReflectionProbeSettings {
@@ -169,9 +176,16 @@ struct ReflectionProbeSettings {
     float intensity = 1.0f;
 };
 
+struct PbrBrdfSettings {
+    float roughness = 0.38f;
+    float metallic = 0.0f;
+    float specular_intensity = 1.0f;
+};
+
 struct RenderFeatureSettings {
     RenderProfile profile = RenderProfile::OriginalPlus;
     SurfaceModel lego_surface_model = SurfaceModel::LegacyLU;
+    PbrBrdfSettings pbr;
     MsaaSettings msaa;
     ScreenSpaceSettings screen_space;
     PostProcessSettings post;
@@ -194,6 +208,12 @@ struct Vec3Key {
     Vec3 value = {0.0f, 0.0f, 0.0f};
     Vec3 forward_tangent = {0.0f, 0.0f, 0.0f};
     Vec3 backward_tangent = {0.0f, 0.0f, 0.0f};
+};
+
+struct TextureAddressMode {
+    bool authored = false;
+    bool wrap_u = true;
+    bool wrap_v = true;
 };
 
 struct MaterialAsset {
@@ -253,10 +273,15 @@ struct MaterialAsset {
     Vec3 ambient = {0.25f, 0.25f, 0.25f};
     Vec3 emissive = {0.0f, 0.0f, 0.0f};
     std::string diffuse_texture_path;
+    TextureAddressMode diffuse_texture_address;
     std::string dark_texture_path;
+    TextureAddressMode dark_texture_address;
     std::string detail_texture_path;
+    TextureAddressMode detail_texture_address;
     std::string gloss_texture_path;
+    TextureAddressMode gloss_texture_address;
     std::string glow_texture_path;
+    TextureAddressMode glow_texture_address;
     bool alpha_blend = false;
     bool alpha_test = false;
     bool has_alpha_property = false;

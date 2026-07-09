@@ -1,8 +1,10 @@
-$input v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular
+$input v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular, v_vertPos, v_diffuseExtra
 
 #include <bgfx_shader.sh>
 
 SAMPLERCUBE(s_luEnv, 1);
+
+#include "shadow_common.sh"
 
 uniform vec4 u_luLightDirFade;
 uniform vec4 u_luCameraPos;
@@ -31,7 +33,7 @@ void main()
     reflColor.a = u_luLightDirFade.w;
 
     float fres = (0.1 + 0.9 * pow(max(0.0, 1.0 - abs(v_vdn)), 3.5)) * 0.5;
-    reflColor.rgb += (fres * diffuse * 2.5) + specular;
+    reflColor.rgb += ((fres * diffuse * 2.5) + specular) * shadowVisibility(v_worldPos.xyz);
     reflColor.a *= (1.0 - v_vdn) * 0.5;
 
     reflColor.rgb = applyLuFog(reflColor.rgb, v_worldPos.xyz);

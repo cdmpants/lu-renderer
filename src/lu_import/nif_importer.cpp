@@ -306,6 +306,31 @@ std::filesystem::path resolveTexturePath(
     return tex_path;
 }
 
+TextureAddressMode textureAddressFromClampMode(bool has_clamp_mode, uint8_t clamp_mode) {
+    TextureAddressMode address;
+    address.authored = has_clamp_mode;
+    switch (clamp_mode & 0x03u) {
+    case 0: // Clamp S, clamp T.
+        address.wrap_u = false;
+        address.wrap_v = false;
+        break;
+    case 1: // Clamp S, wrap T.
+        address.wrap_u = false;
+        address.wrap_v = true;
+        break;
+    case 2: // Wrap S, clamp T.
+        address.wrap_u = true;
+        address.wrap_v = false;
+        break;
+    case 3: // Wrap S, wrap T.
+    default:
+        address.wrap_u = true;
+        address.wrap_v = true;
+        break;
+    }
+    return address;
+}
+
 std::vector<uint8_t> readFile(const std::filesystem::path& path) {
     std::ifstream file(path, std::ios::binary);
     if (!file) return {};
@@ -731,26 +756,41 @@ NifImportResult importNif(const NifImportOptions& options) {
             if (!texture_path.empty()) {
                 out.material.diffuse_texture_path = texture_path.string();
             }
+            out.material.diffuse_texture_address = textureAddressFromClampMode(
+                mesh.material.diffuse_texture_has_clamp_mode,
+                mesh.material.diffuse_texture_clamp_mode);
             auto dark_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.dark_texture);
             if (!dark_texture_path.empty()) {
                 out.material.dark_texture_path = dark_texture_path.string();
             }
+            out.material.dark_texture_address = textureAddressFromClampMode(
+                mesh.material.dark_texture_has_clamp_mode,
+                mesh.material.dark_texture_clamp_mode);
             auto detail_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.detail_texture);
             if (!detail_texture_path.empty()) {
                 out.material.detail_texture_path = detail_texture_path.string();
             }
+            out.material.detail_texture_address = textureAddressFromClampMode(
+                mesh.material.detail_texture_has_clamp_mode,
+                mesh.material.detail_texture_clamp_mode);
             auto gloss_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.gloss_texture);
             if (!gloss_texture_path.empty()) {
                 out.material.gloss_texture_path = gloss_texture_path.string();
             }
+            out.material.gloss_texture_address = textureAddressFromClampMode(
+                mesh.material.gloss_texture_has_clamp_mode,
+                mesh.material.gloss_texture_clamp_mode);
             auto glow_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.glow_texture);
             if (!glow_texture_path.empty()) {
                 out.material.glow_texture_path = glow_texture_path.string();
             }
+            out.material.glow_texture_address = textureAddressFromClampMode(
+                mesh.material.glow_texture_has_clamp_mode,
+                mesh.material.glow_texture_clamp_mode);
             applyLegoppGeometryVariant(
                 out.material,
                 mesh.has_vertex_colors,

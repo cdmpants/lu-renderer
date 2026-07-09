@@ -12,5 +12,5 @@ target_link_libraries(lu_nif_viewer PRIVATE
 target_compile_definitions(lu_nif_viewer PRIVATE GLFW_INCLUDE_NONE)
 
 if(WIN32)
-    target_link_libraries(lu_nif_viewer PRIVATE comdlg32 user32)
+    target_link_libraries(lu_nif_viewer PRIVATE comctl32 comdlg32 user32)
 endif()

@@ -1,9 +1,11 @@
-$input v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse
+$input v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_objectPos
 
 #include <bgfx_shader.sh>
 
 SAMPLER2D(s_diffuse, 0);
 SAMPLERCUBE(s_luEnv, 1);
+
+#include "shadow_common.sh"
 
 uniform vec4 u_luLightDirFade;
 uniform vec4 u_luSpecular;
@@ -36,6 +38,6 @@ void main()
     vec4 outColor = mix(noTextureColor, mix(textureColor, vertColorTextureColor, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 reflectionTint = mix(v_color0.rgb, mix(texColor.rgb, v_color0.rgb * texColor.rgb, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 coloredRefl = reflColor.rgb * (reflColor.a - reflIntensity) * reflectionTint * 2.0;
-    outColor.rgb += coloredRefl + specColor;
+    outColor.rgb = (outColor.rgb * shadowVisibility(v_worldPos.xyz)) + coloredRefl + specColor;
     gl_FragColor = vec4(applyLuFog(outColor.rgb, v_worldPos.xyz), outColor.a);
 }

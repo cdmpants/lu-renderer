@@ -6,6 +6,8 @@ SAMPLER2D(s_diffuse, 0);
 SAMPLERCUBE(s_luEnv, 1);
 SAMPLER2D(s_dark, 2);
 
+#include "shadow_common.sh"
+
 uniform vec4 u_luLightDirFade;
 uniform vec4 u_luSpecular;
 uniform vec4 u_luCameraPos;
@@ -40,6 +42,6 @@ void main()
     vec4 outColor = mix(noTextureColor, mix(textureColor, vertColorTextureColor, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 reflectionTint = mix(v_color0.rgb, mix(texColor.rgb, v_color0.rgb * texColor.rgb, u_luShaderFlags.y), u_luShaderFlags.x);
     vec3 coloredRefl = reflColor.rgb * noiseColor.rgb * (reflColor.a - reflIntensity) * reflectionTint * 2.0;
-    outColor.rgb += coloredRefl + specColor;
+    outColor.rgb = (outColor.rgb * shadowVisibility(v_worldPos.xyz)) + coloredRefl + specColor;
     gl_FragColor = vec4(applyLuFog(outColor.rgb, v_worldPos.xyz), outColor.a);
 }
