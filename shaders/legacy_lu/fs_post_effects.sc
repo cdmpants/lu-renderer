@@ -26,40 +26,6 @@ float hash12(vec2 p)
     return fract((p3.x + p3.y) * p3.z);
 }
 
-vec3 bloomSource(vec2 uv)
-{
-    vec3 sampleColor = texture2D(s_sceneColor, clamp(uv, vec2_splat(0.0), vec2_splat(1.0))).rgb;
-    float authoredBloom = texture2D(s_bloomMask, clamp(uv, vec2_splat(0.0), vec2_splat(1.0))).x;
-    float luma = dot(sampleColor, vec3(0.2126, 0.7152, 0.0722));
-    float threshold = u_bloomParams.y;
-    float soft = max(threshold * 0.25, 0.02);
-    float weight = saturate((luma - threshold + soft) / max(soft, 0.0001));
-    return sampleColor * weight * authoredBloom;
-}
-
-vec3 bloomApprox(vec2 uv)
-{
-    float intensity = u_bloomParams.x;
-    if (intensity <= 0.0) return vec3_splat(0.0);
-
-    vec2 texel = u_screenParams.zw;
-    vec3 bloom = bloomSource(uv) * 0.16;
-    bloom += bloomSource(uv + texel * vec2( 1.5,  0.0)) * 0.10;
-    bloom += bloomSource(uv + texel * vec2(-1.5,  0.0)) * 0.10;
-    bloom += bloomSource(uv + texel * vec2( 0.0,  1.5)) * 0.10;
-    bloom += bloomSource(uv + texel * vec2( 0.0, -1.5)) * 0.10;
-    bloom += bloomSource(uv + texel * vec2( 3.0,  3.0)) * 0.07;
-    bloom += bloomSource(uv + texel * vec2(-3.0,  3.0)) * 0.07;
-    bloom += bloomSource(uv + texel * vec2( 3.0, -3.0)) * 0.07;
-    bloom += bloomSource(uv + texel * vec2(-3.0, -3.0)) * 0.07;
-    bloom += bloomSource(uv + texel * vec2( 6.0,  0.0)) * 0.05;
-    bloom += bloomSource(uv + texel * vec2(-6.0,  0.0)) * 0.05;
-    bloom += bloomSource(uv + texel * vec2( 0.0,  6.0)) * 0.05;
-    bloom += bloomSource(uv + texel * vec2( 0.0, -6.0)) * 0.05;
-
-    return bloom * intensity;
-}
-
 vec3 sampleColorLutSlice(vec3 color, float slice)
 {
     float size = max(u_colorLutParams.y, 2.0);
@@ -187,18 +153,46 @@ vec3 sampleViewNormal(vec2 uv, vec3 centerPos)
     return normal.z < 0.0 ? -normal : normal;
 }
 
-float aoTap(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float radius, float bias, float falloff)
+float aoTap(vec2 sampleUv, vec3 centerPos, vec3 normal, float radius, float bias)
 {
-    vec2 sampleUv = uv + dir * radius * u_screenParams.zw;
     float sampleDepthRaw = sampleDepth(sampleUv);
     if (sampleDepthRaw >= 0.9999) return 0.0;
 
     vec3 samplePos = reconstructViewPos(sampleUv, linearizeDepth(sampleDepthRaw));
     vec3 delta = samplePos - centerPos;
-    float distSq = max(dot(delta, delta), 0.000001);
-    float nd = max(dot(normal, normalize(delta)) - bias, 0.0);
-    float attenuation = saturate(1.0 - distSq / max(falloff * falloff, 0.0001));
-    return nd * attenuation;
+    float dist = max(length(delta), 0.000001);
+    float normalTerm = max(dot(normal, delta / dist) - bias, 0.0);
+    float distanceFade = saturate(1.0 - dist / max(radius, 0.0001));
+    float depthFade = saturate(1.0 - abs(samplePos.z - centerPos.z) / max(radius * 2.0, 0.0001));
+    return normalTerm * distanceFade * distanceFade * depthFade;
+}
+
+float gtaoDirection(vec2 uv, vec3 centerPos, vec3 normal, vec2 dir, float pixelRadius, float viewRadius, float bias)
+{
+    float occ = 0.0;
+    float weight = 0.0;
+
+    float stepWeight = 1.0;
+    vec2 sampleUv = uv + dir * (pixelRadius * 0.25) * u_screenParams.zw;
+    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
+    weight += stepWeight;
+
+    stepWeight = 0.85;
+    sampleUv = uv + dir * (pixelRadius * 0.50) * u_screenParams.zw;
+    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
+    weight += stepWeight;
+
+    stepWeight = 0.65;
+    sampleUv = uv + dir * (pixelRadius * 0.75) * u_screenParams.zw;
+    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
+    weight += stepWeight;
+
+    stepWeight = 0.45;
+    sampleUv = uv + dir * pixelRadius * u_screenParams.zw;
+    occ += aoTap(sampleUv, centerPos, normal, viewRadius, bias) * stepWeight;
+    weight += stepWeight;
+
+    return occ / max(weight, 0.0001);
 }
 
 float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
@@ -209,26 +203,31 @@ float gtaoApprox(vec2 uv, float centerDepthRaw, vec2 pixel)
     float centerDepth = linearizeDepth(centerDepthRaw);
     vec3 centerPos = reconstructViewPos(uv, centerDepth);
     vec3 normal = sampleViewNormal(uv, centerPos);
-    float radius = clamp(u_screenSpaceParams.y * 4.0, 1.0, 32.0);
-    float bias = 0.025;
-    float falloff = max(u_screenSpaceParams.y, 0.25);
-    vec2 d0 = vec2(1.0, 0.0);
-    vec2 d1 = vec2(0.0, 1.0);
-    vec2 d2 = normalize(vec2(1.0, 1.0));
-    vec2 d3 = normalize(vec2(1.0, -1.0));
+    float viewRadius = max(u_screenSpaceParams.y, 0.05);
+    float projectedRadiusX = viewRadius / max(centerDepth * u_depthParams.z, 0.0001) * u_screenParams.x * 0.5;
+    float projectedRadiusY = viewRadius / max(centerDepth * u_depthParams.w, 0.0001) * u_screenParams.y * 0.5;
+    float pixelRadius = clamp(min(projectedRadiusX, projectedRadiusY), 2.0, 96.0);
+    float bias = 0.08;
+    float angle = hash12(pixel) * 6.2831853;
+    vec2 rot = vec2(cos(angle), sin(angle));
+    vec2 d0 = rot;
+    vec2 d1 = vec2(-rot.y, rot.x);
+    vec2 d2 = normalize(d0 + d1);
+    vec2 d3 = normalize(d0 - d1);
 
     float occ = 0.0;
-    occ += aoTap(uv, centerPos, normal,  d0, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal, -d0, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal,  d1, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal, -d1, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal,  d2, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal, -d2, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal,  d3, radius, bias, falloff);
-    occ += aoTap(uv, centerPos, normal, -d3, radius, bias, falloff);
+    occ += gtaoDirection(uv, centerPos, normal,  d0, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal, -d0, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal,  d1, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal, -d1, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal,  d2, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal, -d2, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal,  d3, pixelRadius, viewRadius, bias);
+    occ += gtaoDirection(uv, centerPos, normal, -d3, pixelRadius, viewRadius, bias);
 
-    occ *= 0.125;
-    return clamp(1.0 - occ * intensity, 0.0, 1.0);
+    occ = saturate(occ * 0.85);
+    float visibility = pow(saturate(1.0 - occ), max(intensity, 0.01));
+    return clamp(visibility, 0.0, 1.0);
 }
 
 vec4 ssrTap(vec3 origin, vec3 rayDir, float rayDistance, float thickness)
@@ -299,7 +298,7 @@ void main()
     color = dofApprox(uv, centerDepth, color);
     color *= gtaoApprox(uv, centerDepth, pixel);
     color = ssrApprox(uv, centerDepth, color);
-    color += bloomApprox(uv);
+    color += texture2D(s_bloomMask, uv).rgb * u_bloomParams.x;
     color = applyColorLut(color);
 
     float dist = distance(uv, vec2_splat(0.5));

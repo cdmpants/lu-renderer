@@ -26,8 +26,11 @@ constexpr bgfx::ViewId kViewWorld = 7;
 constexpr bgfx::ViewId kViewSceneNormal = 8;
 constexpr bgfx::ViewId kViewReflectionMask = 9;
 constexpr bgfx::ViewId kViewBloomMask = 10;
-constexpr bgfx::ViewId kViewPost = 11;
-constexpr bgfx::ViewId kViewTemporalPost = 12;
+constexpr bgfx::ViewId kViewBloomExtract = 11;
+constexpr bgfx::ViewId kViewBloomDownFirst = 12;
+constexpr bgfx::ViewId kViewBloomUpFirst = 18;
+constexpr bgfx::ViewId kViewPost = 24;
+constexpr bgfx::ViewId kViewTemporalPost = 25;
 constexpr uint16_t kShadowMapSize = 2048;
 constexpr uint16_t kGlobalProbeSize = 128;
 constexpr uint32_t kDdsCaps2Cubemap = 0x00000200u;
@@ -128,6 +131,14 @@ std::string toLowerCopy(std::string value) {
         return static_cast<char>(std::tolower(ch));
     });
     return value;
+}
+
+bool textImpliesBloom(const std::string& value) {
+    if (value.empty()) return false;
+    const std::string lower = toLowerCopy(value);
+    return lower.find("glow") != std::string::npos ||
+           lower.find("emissive") != std::string::npos ||
+           lower.find("bloom") != std::string::npos;
 }
 
 uint32_t packRgba8(Vec3 rgb, float alpha = 1.0f) {
@@ -316,7 +327,11 @@ bool isLegoppFamily(LegacyShaderFamily family) {
            family == LegacyShaderFamily::LegoppEffect;
 }
 
-float bloomMaskForMaterial(const MaterialAsset& material, float elapsed_seconds) {
+float bloomMaskForMaterial(
+    const MaterialAsset& material,
+    float elapsed_seconds,
+    const std::string& mesh_name,
+    const std::string& source_asset_path) {
     float mask = 0.0f;
     switch (material.legopp_variant) {
     case LegoppShaderVariant::SuperEmissive:
@@ -340,6 +355,15 @@ float bloomMaskForMaterial(const MaterialAsset& material, float elapsed_seconds)
     }
     if (material.lu_shader_alpha_semantic == ShaderAlphaSemantic::ControlGlow ||
         material.lu_shader_alpha_semantic == ShaderAlphaSemantic::ControlEmissive) {
+        mask = std::max(mask, 0.65f);
+    }
+    if (textImpliesBloom(mesh_name) ||
+        textImpliesBloom(source_asset_path) ||
+        textImpliesBloom(material.name) ||
+        textImpliesBloom(material.lu_shader_label) ||
+        textImpliesBloom(material.diffuse_texture_path) ||
+        textImpliesBloom(material.dark_texture_path) ||
+        textImpliesBloom(material.detail_texture_path)) {
         mask = std::max(mask, 0.65f);
     }
 
@@ -405,16 +429,16 @@ float halton(uint64_t index, uint32_t base) {
     return result;
 }
 
-uint64_t samplerFlagsForAddressMode(const TextureAddressMode& address) {
+uint32_t samplerFlagsForAddressMode(const TextureAddressMode& address) {
     if (!address.authored) return kWrapLinearSampler;
 
-    uint64_t flags = 0;
+    uint32_t flags = 0;
     if (!address.wrap_u) flags |= BGFX_SAMPLER_U_CLAMP;
     if (!address.wrap_v) flags |= BGFX_SAMPLER_V_CLAMP;
     return flags;
 }
 
-uint64_t diffuseSamplerFlagsForMaterial(const MaterialAsset& material) {
+uint32_t diffuseSamplerFlagsForMaterial(const MaterialAsset& material) {
     return samplerFlagsForAddressMode(material.diffuse_texture_address);
 }
 
@@ -480,6 +504,8 @@ BgfxRenderer::BgfxRenderer() {
     global_probe_depth_textures_.fill(BGFX_INVALID_HANDLE);
     temporal_history_textures_.fill(BGFX_INVALID_HANDLE);
     temporal_history_framebuffers_.fill(BGFX_INVALID_HANDLE);
+    bloom_textures_.fill(BGFX_INVALID_HANDLE);
+    bloom_framebuffers_.fill(BGFX_INVALID_HANDLE);
 }
 
 BgfxRenderer::~BgfxRenderer() {
@@ -525,6 +551,18 @@ bool BgfxRenderer::init(const RendererInit& init) {
     bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
     bgfx::setViewClear(kViewBloomMask, BGFX_CLEAR_COLOR | BGFX_CLEAR_DEPTH, 0x000000ff, 1.0f, 0);
     bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+    for (size_t i = 0; i < kBloomMipCount; ++i) {
+        const bgfx::ViewId down_view = i == 0
+            ? kViewBloomExtract
+            : static_cast<bgfx::ViewId>(kViewBloomDownFirst + i - 1);
+        bgfx::setViewClear(down_view, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
+        bgfx::setViewRect(down_view, 0, 0, 1, 1);
+        if (i + 1 < kBloomMipCount) {
+            const bgfx::ViewId up_view = static_cast<bgfx::ViewId>(kViewBloomUpFirst + i);
+            bgfx::setViewClear(up_view, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
+            bgfx::setViewRect(up_view, 0, 0, 1, 1);
+        }
+    }
     bgfx::setViewClear(kViewPost, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
     bgfx::setViewRect(kViewPost, 0, 0, width_, height_);
     bgfx::setViewClear(kViewTemporalPost, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
@@ -586,6 +624,7 @@ bool BgfxRenderer::init(const RendererInit& init) {
     u_temporal_params_ = bgfx::createUniform("u_temporalParams", bgfx::UniformType::Vec4);
     u_reflection_mask_value_ = bgfx::createUniform("u_reflectionMaskValue", bgfx::UniformType::Vec4);
     white_texture_ = createSolidTexture(0xffffffffu);
+    black_texture_ = createSolidTexture(0x000000ffu);
     missing_texture_ = createSolidTexture(0xffff00ffu);
     flat_normal_texture_ = createSolidTexture(0xffff8080u);
     neutral_lut_texture_ = createNeutralColorLutTexture();
@@ -622,6 +661,7 @@ bool BgfxRenderer::init(const RendererInit& init) {
     ocean_distort_fx_program_ = loadProgram("vs_ocean_distort_fx.sc.bin", "fs_ocean_distort_fx.sc.bin");
     clear_plastic_program_ = loadProgram("vs_lu_lit_mesh.sc.bin", "fs_clear_plastic.sc.bin");
     shadow_depth_program_ = loadProgram("vs_shadow_depth.sc.bin", "fs_shadow_depth.sc.bin");
+    bloom_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_bloom.sc.bin");
     post_process_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_post_effects.sc.bin");
     fullscreen_copy_program_ = loadProgram("vs_fullscreen.sc.bin", "fs_fullscreen_copy.sc.bin");
     reflection_mask_program_ = loadProgram("vs_reflection_mask.sc.bin", "fs_reflection_mask.sc.bin");
@@ -645,6 +685,7 @@ bool BgfxRenderer::init(const RendererInit& init) {
         !bgfx::isValid(ocean_distort_fx_program_) ||
         !bgfx::isValid(clear_plastic_program_) ||
         !bgfx::isValid(shadow_depth_program_) ||
+        !bgfx::isValid(bloom_program_) ||
         !bgfx::isValid(post_process_program_) ||
         !bgfx::isValid(fullscreen_copy_program_) ||
         !bgfx::isValid(reflection_mask_program_) ||
@@ -668,12 +709,14 @@ void BgfxRenderer::shutdown() {
     destroyTemporalHistoryTargets();
     destroyReflectionMaskTarget();
     destroyBloomMaskTarget();
+    destroyBloomChain();
     destroyTextureCache();
     for (auto& [_, handle] : cube_texture_cache_) {
         if (bgfx::isValid(handle) && handle.idx != neutral_env_texture_.idx) bgfx::destroy(handle);
     }
     cube_texture_cache_.clear();
     if (bgfx::isValid(white_texture_)) bgfx::destroy(white_texture_);
+    if (bgfx::isValid(black_texture_)) bgfx::destroy(black_texture_);
     if (bgfx::isValid(missing_texture_)) bgfx::destroy(missing_texture_);
     if (bgfx::isValid(flat_normal_texture_)) bgfx::destroy(flat_normal_texture_);
     if (bgfx::isValid(color_lut_texture_) && color_lut_texture_.idx != neutral_lut_texture_.idx) bgfx::destroy(color_lut_texture_);
@@ -697,6 +740,7 @@ void BgfxRenderer::shutdown() {
     if (bgfx::isValid(ocean_distort_fx_program_)) bgfx::destroy(ocean_distort_fx_program_);
     if (bgfx::isValid(clear_plastic_program_)) bgfx::destroy(clear_plastic_program_);
     if (bgfx::isValid(shadow_depth_program_)) bgfx::destroy(shadow_depth_program_);
+    if (bgfx::isValid(bloom_program_)) bgfx::destroy(bloom_program_);
     if (bgfx::isValid(post_process_program_)) bgfx::destroy(post_process_program_);
     if (bgfx::isValid(fullscreen_copy_program_)) bgfx::destroy(fullscreen_copy_program_);
     if (bgfx::isValid(reflection_mask_program_)) bgfx::destroy(reflection_mask_program_);
@@ -766,6 +810,16 @@ void BgfxRenderer::resize(uint32_t width, uint32_t height) {
     bgfx::setViewRect(kViewSceneNormal, 0, 0, width_, height_);
     bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
     bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+    for (size_t i = 0; i < kBloomMipCount; ++i) {
+        const bgfx::ViewId down_view = i == 0
+            ? kViewBloomExtract
+            : static_cast<bgfx::ViewId>(kViewBloomDownFirst + i - 1);
+        bgfx::setViewClear(down_view, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
+        if (i + 1 < kBloomMipCount) {
+            const bgfx::ViewId up_view = static_cast<bgfx::ViewId>(kViewBloomUpFirst + i);
+            bgfx::setViewClear(up_view, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
+        }
+    }
     bgfx::setViewRect(kViewPost, 0, 0, width_, height_);
     bgfx::setViewRect(kViewTemporalPost, 0, 0, width_, height_);
     for (uint8_t face = 0; face < 6; ++face) {
@@ -776,6 +830,7 @@ void BgfxRenderer::resize(uint32_t width, uint32_t height) {
     destroyTemporalHistoryTargets();
     destroyReflectionMaskTarget();
     destroyBloomMaskTarget();
+    destroyBloomChain();
     global_probe_capture_dirty_ = true;
 }
 
@@ -838,7 +893,8 @@ void BgfxRenderer::loadWorld(const RenderWorld& world) {
         gpu.index_buffer = bgfx::createIndexBuffer(
             bgfx::copy(mesh.indices.data(), static_cast<uint32_t>(mesh.indices.size() * sizeof(uint32_t))),
             BGFX_BUFFER_INDEX32);
-        const uint64_t diffuse_sampler_flags = diffuseSamplerFlagsForMaterial(mesh.material);
+        const uint32_t diffuse_sampler_flags = diffuseSamplerFlagsForMaterial(mesh.material);
+        gpu.texture_sampler_flags = diffuse_sampler_flags;
         gpu.texture = loadTexture(mesh.material.diffuse_texture_path, diffuse_sampler_flags);
         if (!bgfx::isValid(gpu.texture)) {
             gpu.texture = mesh.material.diffuse_texture_path.empty() ? white_texture_ : missing_texture_;
@@ -853,7 +909,8 @@ void BgfxRenderer::loadWorld(const RenderWorld& world) {
                 auxiliary_texture_address = {};
             }
         }
-        const uint64_t auxiliary_sampler_flags = samplerFlagsForAddressMode(auxiliary_texture_address);
+        const uint32_t auxiliary_sampler_flags = samplerFlagsForAddressMode(auxiliary_texture_address);
+        gpu.dark_texture_sampler_flags = auxiliary_sampler_flags;
         gpu.dark_texture = loadTexture(auxiliary_texture_path, auxiliary_sampler_flags);
         if (!bgfx::isValid(gpu.dark_texture)) {
             gpu.dark_texture = auxiliary_texture_path.empty() ? white_texture_ : missing_texture_;
@@ -921,6 +978,16 @@ void BgfxRenderer::setFeatureSettings(const RenderFeatureSettings& features) {
         bgfx::setViewRect(kViewSceneNormal, 0, 0, width_, height_);
         bgfx::setViewRect(kViewReflectionMask, 0, 0, width_, height_);
         bgfx::setViewRect(kViewBloomMask, 0, 0, width_, height_);
+        for (size_t i = 0; i < kBloomMipCount; ++i) {
+            const bgfx::ViewId down_view = i == 0
+                ? kViewBloomExtract
+                : static_cast<bgfx::ViewId>(kViewBloomDownFirst + i - 1);
+            bgfx::setViewClear(down_view, BGFX_CLEAR_COLOR, 0x000000ff, 1.0f, 0);
+            if (i + 1 < kBloomMipCount) {
+                const bgfx::ViewId up_view = static_cast<bgfx::ViewId>(kViewBloomUpFirst + i);
+                bgfx::setViewClear(up_view, BGFX_CLEAR_NONE, 0x00000000, 1.0f, 0);
+            }
+        }
         bgfx::setViewRect(kViewPost, 0, 0, width_, height_);
         bgfx::setViewRect(kViewTemporalPost, 0, 0, width_, height_);
         for (uint8_t face = 0; face < 6; ++face) {
@@ -931,6 +998,7 @@ void BgfxRenderer::setFeatureSettings(const RenderFeatureSettings& features) {
         destroyTemporalHistoryTargets();
         destroyReflectionMaskTarget();
         destroyBloomMaskTarget();
+        destroyBloomChain();
         global_probe_capture_dirty_ = true;
     }
 }
@@ -1170,7 +1238,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
                 0.0f,
                 0.0f
             };
-            bgfx::setTexture(0, s_diffuse_, mesh.texture);
+            bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, shadow_diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shadow_shader_flags.data());
             bgfx::setUniform(u_lu_effect_time_, shadow_effect_time);
@@ -1255,9 +1323,9 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::isValid(global_probe_texture_);
         const bgfx::TextureHandle lu_env_texture =
             use_global_probe ? global_probe_texture_ : mesh.reflection_texture;
-        bgfx::setTexture(0, s_diffuse_, mesh.texture);
+        bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
         bgfx::setTexture(1, s_lu_env_, lu_env_texture);
-        bgfx::setTexture(2, s_dark_, mesh.dark_texture);
+        bgfx::setTexture(2, s_dark_, mesh.dark_texture, mesh.dark_texture_sampler_flags);
         bgfx::setTexture(3, s_shadow_map_, directional_shadows_enabled ? shadow_depth_texture_ : white_texture_);
         bgfx::setUniform(u_shadow_matrix_, shadow_matrix);
         bgfx::setUniform(u_material_diffuse_, diffuse);
@@ -1382,7 +1450,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTransform(identity_mtx);
             bgfx::setVertexBuffer(0, mesh.vertex_buffer);
             bgfx::setIndexBuffer(mesh.index_buffer);
-            bgfx::setTexture(0, s_diffuse_, mesh.texture);
+            bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
@@ -1413,7 +1481,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTransform(identity_mtx);
             bgfx::setVertexBuffer(0, mesh.vertex_buffer);
             bgfx::setIndexBuffer(mesh.index_buffer);
-            bgfx::setTexture(0, s_diffuse_, mesh.texture);
+            bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
@@ -1429,14 +1497,14 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::submit(kViewReflectionMask, reflection_mask_program_);
         }
 
-        const float bloom_mask = bloomMaskForMaterial(mesh.material, effect_time);
+        const float bloom_mask = bloomMaskForMaterial(mesh.material, effect_time, mesh.name, source_asset_path_);
         const bool transparent_bloom_material = isTransparentForwardMaterial(mesh.material) && bloom_mask > 0.0f;
         if (post_enabled && bloom_mask_enabled && bgfx::isValid(bloom_mask_framebuffer_) &&
             bgfx::isValid(reflection_mask_program_) && (depth_prepass_material || transparent_bloom_material)) {
             bgfx::setTransform(identity_mtx);
             bgfx::setVertexBuffer(0, mesh.vertex_buffer);
             bgfx::setIndexBuffer(mesh.index_buffer);
-            bgfx::setTexture(0, s_diffuse_, mesh.texture);
+            bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
@@ -1461,8 +1529,12 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
     }
 
     if (post_enabled && bgfx::isValid(scene_framebuffer_)) {
+        bgfx::TextureHandle bloom_texture = BGFX_INVALID_HANDLE;
+        if (bloom_mask_enabled && bgfx::isValid(bloom_mask_framebuffer_)) {
+            bloom_texture = buildBloomPyramid();
+        }
         const float tan_half_fov_y = std::tan((kVerticalFovDegrees * 3.14159265358979323846f / 180.0f) * 0.5f);
-        drawPostProcess(effect_time, near_clip, far_clip, tan_half_fov_y * aspect, tan_half_fov_y);
+        drawPostProcess(effect_time, near_clip, far_clip, tan_half_fov_y * aspect, tan_half_fov_y, bloom_texture);
     }
 
     bgfx::dbgTextClear();
@@ -1620,7 +1692,7 @@ bgfx::ProgramHandle BgfxRenderer::loadProgram(const char* vs_name, const char* f
     return bgfx::createProgram(vs, fs, true);
 }
 
-bgfx::TextureHandle BgfxRenderer::loadTexture(const std::string& path, uint64_t sampler_flags) {
+bgfx::TextureHandle BgfxRenderer::loadTexture(const std::string& path, uint32_t sampler_flags) {
     if (path.empty()) return BGFX_INVALID_HANDLE;
     const std::string cache_key = path + "#" + std::to_string(sampler_flags);
     auto cached = texture_cache_.find(cache_key);
@@ -1946,9 +2018,9 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
             bgfx::setTransform(identity_mtx);
             bgfx::setVertexBuffer(0, mesh.vertex_buffer);
             bgfx::setIndexBuffer(mesh.index_buffer);
-            bgfx::setTexture(0, s_diffuse_, mesh.texture);
+            bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setTexture(1, s_lu_env_, bgfx::isValid(mesh.reflection_texture) ? mesh.reflection_texture : neutral_env_texture_);
-            bgfx::setTexture(2, s_dark_, mesh.dark_texture);
+            bgfx::setTexture(2, s_dark_, mesh.dark_texture, mesh.dark_texture_sampler_flags);
             bgfx::setTexture(3, s_shadow_map_, white_texture_);
 
             const std::array<float, 4> shader_flags = shaderFlagsForMaterial(mesh.material);
@@ -2462,6 +2534,169 @@ bool BgfxRenderer::ensureBloomMaskTarget() {
     return true;
 }
 
+void BgfxRenderer::destroyBloomChain() {
+    for (auto& framebuffer : bloom_framebuffers_) {
+        if (bgfx::isValid(framebuffer)) {
+            bgfx::destroy(framebuffer);
+            framebuffer = BGFX_INVALID_HANDLE;
+        }
+    }
+    for (auto& texture : bloom_textures_) {
+        texture = BGFX_INVALID_HANDLE;
+    }
+    bloom_widths_.fill(0);
+    bloom_heights_.fill(0);
+    bloom_chain_target_width_ = 0;
+    bloom_chain_target_height_ = 0;
+}
+
+bool BgfxRenderer::ensureBloomChain() {
+    if (width_ == 0 || height_ == 0) return false;
+    if (bloom_chain_target_width_ == width_ && bloom_chain_target_height_ == height_) {
+        bool valid = true;
+        for (const auto& framebuffer : bloom_framebuffers_) {
+            valid = valid && bgfx::isValid(framebuffer);
+        }
+        if (valid) return true;
+    }
+
+    destroyBloomChain();
+
+    uint32_t mip_width = std::max<uint32_t>(1, width_ / 2);
+    uint32_t mip_height = std::max<uint32_t>(1, height_ / 2);
+    const uint64_t target_flags = BGFX_TEXTURE_RT | BGFX_SAMPLER_U_CLAMP | BGFX_SAMPLER_V_CLAMP;
+    for (size_t i = 0; i < kBloomMipCount; ++i) {
+        bloom_widths_[i] = static_cast<uint16_t>(std::min<uint32_t>(mip_width, UINT16_MAX));
+        bloom_heights_[i] = static_cast<uint16_t>(std::min<uint32_t>(mip_height, UINT16_MAX));
+        bloom_textures_[i] = bgfx::createTexture2D(
+            bloom_widths_[i],
+            bloom_heights_[i],
+            false,
+            1,
+            bgfx::TextureFormat::BGRA8,
+            target_flags);
+        if (!bgfx::isValid(bloom_textures_[i])) {
+            destroyBloomChain();
+            return false;
+        }
+        bloom_framebuffers_[i] = bgfx::createFrameBuffer(1, &bloom_textures_[i], true);
+        if (!bgfx::isValid(bloom_framebuffers_[i])) {
+            destroyBloomChain();
+            return false;
+        }
+        mip_width = std::max<uint32_t>(1, mip_width / 2);
+        mip_height = std::max<uint32_t>(1, mip_height / 2);
+    }
+
+    bloom_chain_target_width_ = width_;
+    bloom_chain_target_height_ = height_;
+    return true;
+}
+
+bgfx::TextureHandle BgfxRenderer::buildBloomPyramid() {
+    if (!bgfx::isValid(bloom_program_) ||
+        !bgfx::isValid(scene_framebuffer_) ||
+        !bgfx::isValid(bloom_mask_framebuffer_) ||
+        !ensureBloomChain()) {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    const bgfx::TextureHandle scene_color = bgfx::getTexture(scene_framebuffer_, 0);
+    const bgfx::TextureHandle bloom_mask = bgfx::getTexture(bloom_mask_framebuffer_, 0);
+    if (!bgfx::isValid(scene_color) || !bgfx::isValid(bloom_mask)) return BGFX_INVALID_HANDLE;
+
+    auto submitPass = [&](bgfx::ViewId view_id,
+                          bgfx::FrameBufferHandle framebuffer,
+                          uint16_t target_width,
+                          uint16_t target_height,
+                          bgfx::TextureHandle source,
+                          bgfx::TextureHandle mask,
+                          const float params[4],
+                          uint64_t state) {
+        bgfx::TransientVertexBuffer tvb;
+        constexpr uint32_t vertex_count = 3;
+        if (bgfx::getAvailTransientVertexBuffer(vertex_count, PostVertex::layout) < vertex_count) return false;
+        bgfx::allocTransientVertexBuffer(&tvb, vertex_count, PostVertex::layout);
+
+        auto* verts = reinterpret_cast<PostVertex*>(tvb.data);
+        verts[0] = {-1.0f, -1.0f, 0.0f, 0.0f, 1.0f};
+        verts[1] = { 3.0f, -1.0f, 0.0f, 2.0f, 1.0f};
+        verts[2] = {-1.0f,  3.0f, 0.0f, 0.0f,-1.0f};
+
+        bgfx::setViewFrameBuffer(view_id, framebuffer);
+        bgfx::setViewRect(view_id, 0, 0, target_width, target_height);
+        bgfx::touch(view_id);
+        bgfx::setVertexBuffer(0, &tvb);
+        bgfx::setTexture(0, s_scene_color_, source);
+        bgfx::setTexture(1, s_bloom_mask_, bgfx::isValid(mask) ? mask : black_texture_);
+        bgfx::setUniform(u_bloom_params_, params);
+        bgfx::setState(state);
+        bgfx::submit(view_id, bloom_program_);
+        return true;
+    };
+
+    const float threshold = std::clamp(features_.post.bloom_threshold, 0.0f, 4.0f);
+    float params[4] = {
+        0.0f,
+        threshold,
+        1.0f / static_cast<float>(std::max<uint32_t>(width_, 1)),
+        1.0f / static_cast<float>(std::max<uint32_t>(height_, 1))
+    };
+    const uint64_t opaque_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
+    if (!submitPass(
+            kViewBloomExtract,
+            bloom_framebuffers_[0],
+            bloom_widths_[0],
+            bloom_heights_[0],
+            scene_color,
+            bloom_mask,
+            params,
+            opaque_state)) {
+        return BGFX_INVALID_HANDLE;
+    }
+
+    for (size_t i = 1; i < kBloomMipCount; ++i) {
+        params[0] = 1.0f;
+        params[2] = 1.0f / static_cast<float>(std::max<uint16_t>(bloom_widths_[i - 1], 1));
+        params[3] = 1.0f / static_cast<float>(std::max<uint16_t>(bloom_heights_[i - 1], 1));
+        const bgfx::ViewId view_id = static_cast<bgfx::ViewId>(kViewBloomDownFirst + i - 1);
+        if (!submitPass(
+                view_id,
+                bloom_framebuffers_[i],
+                bloom_widths_[i],
+                bloom_heights_[i],
+                bloom_textures_[i - 1],
+                black_texture_,
+                params,
+                opaque_state)) {
+            return BGFX_INVALID_HANDLE;
+        }
+    }
+
+    const uint64_t additive_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_BLEND_ADD;
+    for (size_t source_level = kBloomMipCount - 1; source_level > 0; --source_level) {
+        const size_t target_level = source_level - 1;
+        params[0] = 2.0f;
+        params[2] = 1.0f / static_cast<float>(std::max<uint16_t>(bloom_widths_[source_level], 1));
+        params[3] = 1.0f / static_cast<float>(std::max<uint16_t>(bloom_heights_[source_level], 1));
+        const bgfx::ViewId view_id = static_cast<bgfx::ViewId>(
+            kViewBloomUpFirst + (kBloomMipCount - 1 - source_level));
+        if (!submitPass(
+                view_id,
+                bloom_framebuffers_[target_level],
+                bloom_widths_[target_level],
+                bloom_heights_[target_level],
+                bloom_textures_[source_level],
+                black_texture_,
+                params,
+                additive_state)) {
+            return BGFX_INVALID_HANDLE;
+        }
+    }
+
+    return bloom_textures_[0];
+}
+
 void BgfxRenderer::drawFullscreenCopy(bgfx::TextureHandle texture) {
     if (!bgfx::isValid(fullscreen_copy_program_) || !bgfx::isValid(texture)) return;
 
@@ -2484,7 +2719,13 @@ void BgfxRenderer::drawFullscreenCopy(bgfx::TextureHandle texture) {
     bgfx::submit(kViewPost, fullscreen_copy_program_);
 }
 
-void BgfxRenderer::drawPostProcess(float effect_time, float near_clip, float far_clip, float tan_half_fov_x, float tan_half_fov_y) {
+void BgfxRenderer::drawPostProcess(
+    float effect_time,
+    float near_clip,
+    float far_clip,
+    float tan_half_fov_x,
+    float tan_half_fov_y,
+    bgfx::TextureHandle bloom_texture) {
     if (!bgfx::isValid(post_process_program_) || !bgfx::isValid(scene_framebuffer_)) return;
     const bgfx::TextureHandle scene_color = bgfx::getTexture(scene_framebuffer_, 0);
     const bgfx::TextureHandle scene_depth = bgfx::getTexture(scene_framebuffer_, 1);
@@ -2501,10 +2742,6 @@ void BgfxRenderer::drawPostProcess(float effect_time, float near_clip, float far
     bgfx::TextureHandle reflection_mask = BGFX_INVALID_HANDLE;
     if (bgfx::isValid(reflection_mask_framebuffer_)) {
         reflection_mask = bgfx::getTexture(reflection_mask_framebuffer_, 0);
-    }
-    bgfx::TextureHandle bloom_mask = BGFX_INVALID_HANDLE;
-    if (bgfx::isValid(bloom_mask_framebuffer_)) {
-        bloom_mask = bgfx::getTexture(bloom_mask_framebuffer_, 0);
     }
     bgfx::TextureHandle scene_normal = BGFX_INVALID_HANDLE;
     if (bgfx::isValid(scene_normal_framebuffer_)) {
@@ -2601,7 +2838,7 @@ void BgfxRenderer::drawPostProcess(float effect_time, float near_clip, float far
         bgfx::setTexture(2, s_reflection_mask_, white_texture_);
     }
     bgfx::setTexture(3, s_color_lut_, bgfx::isValid(color_lut_texture_) ? color_lut_texture_ : neutral_lut_texture_);
-    bgfx::setTexture(4, s_bloom_mask_, bgfx::isValid(bloom_mask) ? bloom_mask : white_texture_);
+    bgfx::setTexture(4, s_bloom_mask_, bgfx::isValid(bloom_texture) ? bloom_texture : black_texture_);
     bgfx::setTexture(5, s_scene_normal_, bgfx::isValid(scene_normal) ? scene_normal : flat_normal_texture_);
     bgfx::setTexture(6, s_history_color_, bgfx::isValid(history_read) ? history_read : scene_color);
     bgfx::setUniform(u_post_params_, post_params);

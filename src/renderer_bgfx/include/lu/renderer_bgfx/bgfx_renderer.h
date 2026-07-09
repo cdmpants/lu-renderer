@@ -49,12 +49,16 @@ public:
     std::string lastError() const { return last_error_; }
 
 private:
+    static constexpr size_t kBloomMipCount = 6;
+
     struct GpuMesh {
         bgfx::VertexBufferHandle vertex_buffer = BGFX_INVALID_HANDLE;
         bgfx::IndexBufferHandle index_buffer = BGFX_INVALID_HANDLE;
         bgfx::TextureHandle texture = BGFX_INVALID_HANDLE;
         bgfx::TextureHandle dark_texture = BGFX_INVALID_HANDLE;
         bgfx::TextureHandle reflection_texture = BGFX_INVALID_HANDLE;
+        uint32_t texture_sampler_flags = 0;
+        uint32_t dark_texture_sampler_flags = 0;
         std::string name;
         MaterialAsset material;
         uint32_t index_count = 0;
@@ -71,7 +75,7 @@ private:
 
     bgfx::ShaderHandle loadShader(const char* name);
     bgfx::ProgramHandle loadProgram(const char* vs_name, const char* fs_name);
-    bgfx::TextureHandle loadTexture(const std::string& path, uint64_t sampler_flags);
+    bgfx::TextureHandle loadTexture(const std::string& path, uint32_t sampler_flags);
     bgfx::TextureHandle loadColorLutTexture(const std::string& path);
     bgfx::TextureHandle loadReflectionCubeTexture(const std::string& name);
     bgfx::TextureHandle loadCubeTextureDds(const std::filesystem::path& path, uint64_t sampler_flags);
@@ -97,11 +101,20 @@ private:
     bool ensureReflectionMaskTarget();
     void destroyBloomMaskTarget();
     bool ensureBloomMaskTarget();
+    void destroyBloomChain();
+    bool ensureBloomChain();
+    bgfx::TextureHandle buildBloomPyramid();
     void destroySceneNormalTarget();
     bool ensureSceneNormalTarget();
     void destroyTemporalHistoryTargets();
     bool ensureTemporalHistoryTargets();
-    void drawPostProcess(float effect_time, float near_clip, float far_clip, float tan_half_fov_x, float tan_half_fov_y);
+    void drawPostProcess(
+        float effect_time,
+        float near_clip,
+        float far_clip,
+        float tan_half_fov_x,
+        float tan_half_fov_y,
+        bgfx::TextureHandle bloom_texture);
     void drawFullscreenCopy(bgfx::TextureHandle texture);
 
     std::filesystem::path shader_dir_;
@@ -131,6 +144,7 @@ private:
     bgfx::ProgramHandle clear_plastic_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle shadow_depth_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle post_process_program_ = BGFX_INVALID_HANDLE;
+    bgfx::ProgramHandle bloom_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle fullscreen_copy_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle reflection_mask_program_ = BGFX_INVALID_HANDLE;
     bgfx::ProgramHandle view_normal_program_ = BGFX_INVALID_HANDLE;
@@ -185,6 +199,7 @@ private:
     bgfx::UniformHandle u_lu_bbb_light_color1_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_bbb_light_color2_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle white_texture_ = BGFX_INVALID_HANDLE;
+    bgfx::TextureHandle black_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle missing_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle flat_normal_texture_ = BGFX_INVALID_HANDLE;
     bgfx::TextureHandle neutral_lut_texture_ = BGFX_INVALID_HANDLE;
@@ -232,6 +247,12 @@ private:
     bgfx::FrameBufferHandle bloom_mask_framebuffer_ = BGFX_INVALID_HANDLE;
     uint32_t bloom_mask_target_width_ = 0;
     uint32_t bloom_mask_target_height_ = 0;
+    std::array<bgfx::TextureHandle, kBloomMipCount> bloom_textures_{};
+    std::array<bgfx::FrameBufferHandle, kBloomMipCount> bloom_framebuffers_{};
+    std::array<uint16_t, kBloomMipCount> bloom_widths_{};
+    std::array<uint16_t, kBloomMipCount> bloom_heights_{};
+    uint32_t bloom_chain_target_width_ = 0;
+    uint32_t bloom_chain_target_height_ = 0;
     std::string color_lut_path_;
     float color_lut_size_ = 16.0f;
     float color_lut_horizontal_ = 1.0f;

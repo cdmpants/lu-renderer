@@ -114,6 +114,11 @@ struct MaterialEmissiveController {
     std::vector<Vec3Key> keys;
 };
 
+struct UvTiling {
+    bool u = false;
+    bool v = false;
+};
+
 std::string blockTypeName(const lu::assets::NifFile& nif, int32_t block_ref) {
     if (block_ref < 0 || static_cast<size_t>(block_ref) >= nif.block_type_indices.size()) return {};
     uint16_t type_index = nif.block_type_indices[static_cast<size_t>(block_ref)];
@@ -329,6 +334,28 @@ TextureAddressMode textureAddressFromClampMode(bool has_clamp_mode, uint8_t clam
         break;
     }
     return address;
+}
+
+TextureAddressMode allowRepeatForTiledUv(TextureAddressMode address, UvTiling tiling) {
+    if (tiling.u) address.wrap_u = true;
+    if (tiling.v) address.wrap_v = true;
+    return address;
+}
+
+UvTiling detectUvTiling(const lu::assets::NifRenderMesh& mesh, bool use_second_uv) {
+    constexpr float kUvRepeatEpsilon = 0.001f;
+    UvTiling tiling;
+    for (const auto& vertex : mesh.vertices) {
+        const float u = use_second_uv ? vertex.uv2[0] : vertex.uv[0];
+        const float v = use_second_uv ? vertex.uv2[1] : vertex.uv[1];
+        tiling.u = tiling.u || u < -kUvRepeatEpsilon || u > 1.0f + kUvRepeatEpsilon;
+        tiling.v = tiling.v || v < -kUvRepeatEpsilon || v > 1.0f + kUvRepeatEpsilon;
+    }
+    return tiling;
+}
+
+UvTiling mergeUvTiling(UvTiling a, UvTiling b) {
+    return {a.u || b.u, a.v || b.v};
 }
 
 std::vector<uint8_t> readFile(const std::filesystem::path& path) {
@@ -750,47 +777,60 @@ NifImportResult importNif(const NifImportOptions& options) {
                 mesh.material.emissive[1],
                 mesh.material.emissive[2]
             };
+            const UvTiling uv0_tiling = detectUvTiling(mesh, false);
+            const UvTiling uv1_tiling = detectUvTiling(mesh, true);
+            const UvTiling any_uv_tiling = mergeUvTiling(uv0_tiling, uv1_tiling);
 
             auto texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.diffuse_texture);
             if (!texture_path.empty()) {
                 out.material.diffuse_texture_path = texture_path.string();
             }
-            out.material.diffuse_texture_address = textureAddressFromClampMode(
-                mesh.material.diffuse_texture_has_clamp_mode,
-                mesh.material.diffuse_texture_clamp_mode);
+            out.material.diffuse_texture_address = allowRepeatForTiledUv(
+                textureAddressFromClampMode(
+                    mesh.material.diffuse_texture_has_clamp_mode,
+                    mesh.material.diffuse_texture_clamp_mode),
+                uv0_tiling);
             auto dark_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.dark_texture);
             if (!dark_texture_path.empty()) {
                 out.material.dark_texture_path = dark_texture_path.string();
             }
-            out.material.dark_texture_address = textureAddressFromClampMode(
-                mesh.material.dark_texture_has_clamp_mode,
-                mesh.material.dark_texture_clamp_mode);
+            out.material.dark_texture_address = allowRepeatForTiledUv(
+                textureAddressFromClampMode(
+                    mesh.material.dark_texture_has_clamp_mode,
+                    mesh.material.dark_texture_clamp_mode),
+                any_uv_tiling);
             auto detail_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.detail_texture);
             if (!detail_texture_path.empty()) {
                 out.material.detail_texture_path = detail_texture_path.string();
             }
-            out.material.detail_texture_address = textureAddressFromClampMode(
-                mesh.material.detail_texture_has_clamp_mode,
-                mesh.material.detail_texture_clamp_mode);
+            out.material.detail_texture_address = allowRepeatForTiledUv(
+                textureAddressFromClampMode(
+                    mesh.material.detail_texture_has_clamp_mode,
+                    mesh.material.detail_texture_clamp_mode),
+                uv0_tiling);
             auto gloss_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.gloss_texture);
             if (!gloss_texture_path.empty()) {
                 out.material.gloss_texture_path = gloss_texture_path.string();
             }
-            out.material.gloss_texture_address = textureAddressFromClampMode(
-                mesh.material.gloss_texture_has_clamp_mode,
-                mesh.material.gloss_texture_clamp_mode);
+            out.material.gloss_texture_address = allowRepeatForTiledUv(
+                textureAddressFromClampMode(
+                    mesh.material.gloss_texture_has_clamp_mode,
+                    mesh.material.gloss_texture_clamp_mode),
+                uv0_tiling);
             auto glow_texture_path = resolveTexturePath(
                 res_root, options.nif_path, mesh.material.glow_texture);
             if (!glow_texture_path.empty()) {
                 out.material.glow_texture_path = glow_texture_path.string();
             }
-            out.material.glow_texture_address = textureAddressFromClampMode(
-                mesh.material.glow_texture_has_clamp_mode,
-                mesh.material.glow_texture_clamp_mode);
+            out.material.glow_texture_address = allowRepeatForTiledUv(
+                textureAddressFromClampMode(
+                    mesh.material.glow_texture_has_clamp_mode,
+                    mesh.material.glow_texture_clamp_mode),
+                uv0_tiling);
             applyLegoppGeometryVariant(
                 out.material,
                 mesh.has_vertex_colors,

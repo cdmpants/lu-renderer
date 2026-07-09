@@ -22,35 +22,61 @@ float shadowVisibility(vec3 worldPos)
     }
 
     float texel = u_shadowParams.w;
+    float lightRadius = max(u_shadowParams.y, 0.0);
     float blockerSum = 0.0;
     float blockerCount = 0.0;
-    float searchRadius = max(u_shadowParams.y * 16.0, 1.0);
+    float searchRadius = max(1.0, lightRadius * 96.0);
     vec2 searchStep = vec2_splat(texel * searchRadius);
 
-    float d = shadowDepthAt(uv + searchStep * vec2(-0.75, -0.75));
+    vec2 poisson0 = vec2(-0.326, -0.406);
+    vec2 poisson1 = vec2(-0.840, -0.074);
+    vec2 poisson2 = vec2(-0.696,  0.457);
+    vec2 poisson3 = vec2(-0.203,  0.621);
+    vec2 poisson4 = vec2( 0.962, -0.195);
+    vec2 poisson5 = vec2( 0.473, -0.480);
+    vec2 poisson6 = vec2( 0.519,  0.767);
+    vec2 poisson7 = vec2( 0.185, -0.893);
+
+    float d = shadowDepthAt(uv + searchStep * poisson0);
     float b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
-    d = shadowDepthAt(uv + searchStep * vec2( 0.75, -0.75));
+    d = shadowDepthAt(uv + searchStep * poisson1);
     b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
-    d = shadowDepthAt(uv + searchStep * vec2(-0.75,  0.75));
+    d = shadowDepthAt(uv + searchStep * poisson2);
     b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
-    d = shadowDepthAt(uv + searchStep * vec2( 0.75,  0.75));
+    d = shadowDepthAt(uv + searchStep * poisson3);
+    b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
+    d = shadowDepthAt(uv + searchStep * poisson4);
+    b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
+    d = shadowDepthAt(uv + searchStep * poisson5);
+    b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
+    d = shadowDepthAt(uv + searchStep * poisson6);
+    b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
+    d = shadowDepthAt(uv + searchStep * poisson7);
     b = 1.0 - step(receiverDepth, d); blockerSum += d * b; blockerCount += b;
 
     if (blockerCount <= 0.0) return 1.0;
 
     float avgBlocker = blockerSum / blockerCount;
-    float penumbra = saturate((receiverDepth - avgBlocker) / max(avgBlocker, 0.0001)) * u_shadowParams.y * 96.0;
-    float radius = max(penumbra, 1.0) * texel;
+    float receiverGap = saturate((receiverDepth - avgBlocker) * 64.0);
+    float radiusTexels = max(1.0, lightRadius * 192.0 * (0.35 + receiverGap));
+    float radius = radiusTexels * texel;
     float visibility = 0.0;
-    visibility += step(receiverDepth, shadowDepthAt(uv));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 1.0,  0.0)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-1.0,  0.0)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.0,  1.0)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.0, -1.0)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.7,  0.7)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.7,  0.7)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.7, -0.7)));
-    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.7, -0.7)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson0));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson1));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson2));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson3));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson4));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson5));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson6));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * poisson7));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.507,  0.064)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.896,  0.412)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.322, -0.933)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.792, -0.598)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.842,  0.800)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2(-0.105, -0.025)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.746, -0.667)));
+    visibility += step(receiverDepth, shadowDepthAt(uv + radius * vec2( 0.390,  0.025)));
 
-    return mix(0.35, 1.0, visibility / 9.0);
+    return mix(0.25, 1.0, visibility / 16.0);
 }

@@ -1,5 +1,8 @@
 set(LU_RENDERER_SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/runtime/shaders")
 set(LU_RENDERER_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/legacy_lu")
+set(LU_RENDERER_FRAGMENT_SHADER_INCLUDES
+    "${LU_RENDERER_SHADER_DIR}/shadow_common.sh"
+)
 
 bgfx_compile_shaders(
     TYPE VERTEX
@@ -41,6 +44,7 @@ bgfx_compile_shaders(
         "${LU_RENDERER_SHADER_DIR}/fs_ocean_distort_fx.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_clear_plastic.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_reflection_mask.sc"
+        "${LU_RENDERER_SHADER_DIR}/fs_bloom.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_post_effects.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_fullscreen_copy.sc"
         "${LU_RENDERER_SHADER_DIR}/fs_shadow_depth.sc"
@@ -48,6 +52,7 @@ bgfx_compile_shaders(
     VARYING_DEF "${LU_RENDERER_SHADER_DIR}/varying.def.sc"
     OUTPUT_DIR "${LU_RENDERER_SHADER_OUTPUT_DIR}"
     INCLUDE_DIRS "${CMAKE_SOURCE_DIR}/third_party/bgfx.cmake/bgfx/src"
+    DEPENDS ${LU_RENDERER_FRAGMENT_SHADER_INCLUDES}
     OUT_FILES_VAR LU_RENDERER_FS_OUTPUTS
 )
 
