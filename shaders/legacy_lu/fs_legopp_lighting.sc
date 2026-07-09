@@ -129,15 +129,15 @@ vec3 calculatePbrColor(vec3 baseColor, vec3 normal, vec3 viewVector, vec3 reflec
     float distribution = pbrDistributionGgx(ndoth, roughness);
     float geometry = pbrGeometrySchlickGgx(ndotv, roughness) * pbrGeometrySchlickGgx(ndotl, roughness);
     vec3 specular = (distribution * geometry * fresnel) / max(0.001, 4.0 * ndotv * ndotl);
-    vec3 diffuse = (vec3_splat(1.0) - fresnel) * (1.0 - metallic) * baseColor * 0.31830989;
-    vec3 direct = (diffuse + specular) * u_luLightColorShadow.rgb * ndotl;
+    vec3 diffuse = (vec3_splat(1.0) - fresnel) * (1.0 - metallic) * baseColor;
+    vec3 directSpecular = specular * u_luLightColorShadow.rgb * ndotl;
 
     vec3 reflectDir = vec3(reflectVector.x, -reflectVector.y, reflectVector.z);
     vec3 envColor = textureCube(s_luEnv, reflectDir).rgb;
     vec3 envFresnel = pbrFresnelSchlick(ndotv, f0);
     vec3 envSpecular = envColor * envFresnel * reflectionScale * u_luReflectionParams.y * specularIntensity * mix(1.0, 0.35, roughness);
-    vec3 ambient = baseColor * diffuseLight * (1.0 - metallic) * 0.25;
-    return (direct + ambient + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
+    vec3 luDiffuse = diffuse * diffuseLight;
+    return (luDiffuse + directSpecular + envSpecular) * u_luLightColorShadow.a * shadowVisibilityWithNormal(worldPos, normal);
 }
 
 vec4 applyGrayscale(vec4 result)
