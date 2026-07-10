@@ -43,7 +43,6 @@
 #include <cmath>
 #include <optional>
 #include <string>
-#include <string_view>
 #include <vector>
 
 using lu::renderer::MeshAsset;
@@ -63,32 +62,6 @@ using lu::renderer::bgfx_backend::BgfxRenderer;
 using lu::renderer::bgfx_backend::RendererInit;
 
 namespace {
-
-#ifndef LU_RENDERER_BUILD_CONFIG
-#define LU_RENDERER_BUILD_CONFIG "Unknown"
-#endif
-
-#ifndef LU_RENDERER_GIT_COMMIT
-#define LU_RENDERER_GIT_COMMIT "unknown"
-#endif
-
-constexpr std::string_view kBuildConfig = LU_RENDERER_BUILD_CONFIG;
-constexpr std::string_view kGitCommit = LU_RENDERER_GIT_COMMIT;
-constexpr std::string_view kCanonicalBuildConfig = "RelWithDebInfo";
-
-std::string viewerBuildIdentity() {
-    std::string identity;
-    if (kBuildConfig == kCanonicalBuildConfig) {
-        identity = "Canonical";
-    } else {
-        identity = "Developer ";
-        identity += kBuildConfig;
-        identity += " build";
-    }
-    identity += " | ";
-    identity += kGitCommit;
-    return identity;
-}
 
 struct Args {
     std::filesystem::path client_root;
@@ -1097,9 +1070,7 @@ bool loadAnimation(const std::filesystem::path& animation_path, Args& args, Rend
 }
 
 void setViewerTitle(GLFWwindow* window, const std::filesystem::path& nif_path) {
-    std::string title = "LU NIF Viewer [";
-    title += viewerBuildIdentity();
-    title += "]";
+    std::string title = "LU NIF Viewer";
     if (!nif_path.empty()) {
         title += " - ";
         title += nif_path.filename().string();
@@ -2031,8 +2002,7 @@ int main(int argc, char** argv) {
     if (args.hidden) {
         glfwWindowHint(GLFW_VISIBLE, GLFW_FALSE);
     }
-    const std::string initial_title = "LU NIF Viewer [" + viewerBuildIdentity() + "]";
-    GLFWwindow* window = glfwCreateWindow(1280, 720, initial_title.c_str(), nullptr, nullptr);
+    GLFWwindow* window = glfwCreateWindow(1280, 720, "LU NIF Viewer", nullptr, nullptr);
     if (!window) {
         std::cerr << "Failed to create GLFW window\n";
         glfwTerminate();

@@ -18,27 +18,23 @@ LU-Rebuilt client, not just a one-off tool.
 Original LU client assets are never committed to this repository. Point the
 viewer at a local unpacked client.
 
-## Canonical Viewer
+## LU NIF Viewer
 
-There is one supported visual-reference application: **LU NIF Viewer**. Build
-and launch it from the repository root with:
+There is one viewer application: **LU NIF Viewer**. Build and launch it from
+the repository root with:
 
 ```powershell
 .\Run-NIF-Viewer.ps1
 ```
 
-This always builds the canonical optimized viewer with debugging symbols and
-publishes it to the deliberately configuration-free path:
+This builds the normal optimized viewer with debugging symbols directly at:
 
 ```text
 viewer\LU NIF Viewer.exe
 ```
 
-Do not use an executable under `build\...\Debug` or
-`build\...\RelWithDebInfo` as the visual reference. Those are CMake's
-configuration-specific build artifacts. The viewer title identifies the
-published build as `Canonical`; a Debug build identifies itself as a developer
-build.
+Executables under `build\...\Debug` are optional developer artifacts. The
+launcher does not create or use them.
 
 Arguments after the launcher name are passed to the viewer:
 
