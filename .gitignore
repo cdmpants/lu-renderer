@@ -1,6 +1,8 @@
 build/
 out/
 .vs/
+viewer/*.exe
+viewer/*.pdb
 
 CMakeUserPresets.json
 *.user

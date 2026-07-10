@@ -44,7 +44,7 @@ The current `RenderFeatureSettings` object is the runtime control surface for
 these passes. The NIF viewer exposes the same settings so effect constants can
 be tuned live before they become serialized/profile defaults. Continuous
 graphics parameters should have both sliders and exact value fields in the
-debug viewer; the current Win32 debug panel follows that pattern for PBR,
+NIF viewer; the current Win32 diagnostics panel follows that pattern for PBR,
 SSR/GTAO, post, PCSS, LUT, and reflection-probe controls.
 
 The current depth-dependent post path allocates an explicit view-normal/depth
@@ -71,7 +71,7 @@ the previous history using tunable feedback and clamps the history around the
 current color to reduce obvious stale-frame drag. Until motion-vector
 reprojection exists, the renderer invalidates history whenever the camera mode,
 eye, target, yaw, pitch, or distance changes, so accumulation is limited to
-stable views. The debug viewer exposes TAA enable, feedback, and jitter
+stable views. The NIF viewer exposes TAA enable, feedback, and jitter
 controls. Motion vectors, camera/object reprojection, disocclusion tests, and
 velocity-aware sharpening are still future work before this should be
 considered final-quality TAA.
@@ -125,7 +125,7 @@ the available references during this pass, so native LU post-processing intent
 is still an open investigation item; the hook is deliberately asset-driven so
 verified LU DDS LUTs can be dropped in without changing the renderer contract.
 The current workspace only contains renderer reflection-map DDS files and bgfx
-sample DDS textures, not identifiable LU color-grading LUTs. The debug viewer
+sample DDS textures, not identifiable LU color-grading LUTs. The NIF viewer
 therefore exposes both a path field and a DDS browse button for selecting LUTs
 from an unpacked client install when those assets are available.
 

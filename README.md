@@ -18,18 +18,33 @@ LU-Rebuilt client, not just a one-off tool.
 Original LU client assets are never committed to this repository. Point the
 viewer at a local unpacked client.
 
-## Build
+## Canonical Viewer
+
+There is one supported visual-reference application: **LU NIF Viewer**. Build
+and launch it from the repository root with:
 
 ```powershell
-cmake -S . -B build -DLU_ASSETS_DIR=V:/Repositories/LU-Rebuilt/lu-assets
-cmake --build build --config Debug
+.\Run-NIF-Viewer.ps1
 ```
 
-## Run
+This always builds the canonical optimized viewer with debugging symbols and
+publishes it to the deliberately configuration-free path:
+
+```text
+viewer\LU NIF Viewer.exe
+```
+
+Do not use an executable under `build\...\Debug` or
+`build\...\RelWithDebInfo` as the visual reference. Those are CMake's
+configuration-specific build artifacts. The viewer title identifies the
+published build as `Canonical`; a Debug build identifies itself as a developer
+build.
+
+Arguments after the launcher name are passed to the viewer:
 
 ```powershell
 $clientRoot = "<path-to-unpacked-client>"
-.\build\apps\nif_viewer\Debug\lu_nif_viewer.exe `
+.\Run-NIF-Viewer.ps1 `
   --client-root $clientRoot `
   --nif "$clientRoot\res\mesh\3dui\1150.nif"
 ```
@@ -45,5 +60,8 @@ by walking up to the nearest `res` directory.
 For CI/smoke checks, the viewer can render a few frames and quit:
 
 ```powershell
-.\build\apps\nif_viewer\Debug\lu_nif_viewer.exe --hidden --exit-after-frames 3
+.\Run-NIF-Viewer.ps1 --hidden --exit-after-frames 3
 ```
+
+`lu_shader_audit` is a separate command-line inspection tool. It does not
+render images and is not an alternate viewer.
