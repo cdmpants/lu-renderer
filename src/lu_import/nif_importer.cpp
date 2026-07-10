@@ -239,34 +239,48 @@ std::unordered_map<uint32_t, MaterialEmissiveController> collectMaterialEmissive
     return controllers_by_node;
 }
 
-std::string joinShaderMetadata(const std::vector<std::string>& values) {
-    std::string joined;
-    for (const auto& value : values) {
-        if (joined.find(value) != std::string::npos) continue;
-        if (!joined.empty()) joined += ";";
-        joined += value;
-    }
-    return joined;
-}
-
-std::string collectNifShaderMetadata(const lu::assets::NifFile& nif) {
-    std::vector<std::string> values;
-    for (const auto& value : nif.string_table) {
-        if (isShaderMetadataString(value)) {
-            values.push_back(value);
-        }
-    }
-    return joinShaderMetadata(values);
-}
-
-std::string uniqueNifShaderMetadata(const std::string& nif_metadata) {
-    if (nif_metadata.empty()) return {};
-    if (nif_metadata.find(';') != std::string::npos) return {};
-    return nif_metadata;
-}
-
 std::string shaderMetadataForMaterial(const std::string& material_name) {
     if (isShaderMetadataString(material_name)) return material_name;
+    return {};
+}
+
+struct NifNodeHierarchy {
+    std::unordered_map<uint32_t, uint32_t> parent_by_block;
+    std::unordered_map<uint32_t, std::string> name_by_block;
+};
+
+NifNodeHierarchy buildNifNodeHierarchy(const lu::assets::NifFile& nif) {
+    NifNodeHierarchy hierarchy;
+    for (const auto& node : nif.nodes) {
+        hierarchy.name_by_block.emplace(node.block_index, node.name);
+        for (int32_t child_ref : node.children) {
+            if (child_ref >= 0) {
+                hierarchy.parent_by_block.emplace(
+                    static_cast<uint32_t>(child_ref),
+                    node.block_index);
+            }
+        }
+    }
+    return hierarchy;
+}
+
+std::string nearestMultishaderParentName(
+    const NifNodeHierarchy& hierarchy,
+    uint32_t source_node_block) {
+
+    std::unordered_set<uint32_t> visited;
+    uint32_t current = source_node_block;
+    while (visited.insert(current).second) {
+        auto parent_it = hierarchy.parent_by_block.find(current);
+        if (parent_it == hierarchy.parent_by_block.end()) break;
+        current = parent_it->second;
+
+        auto name_it = hierarchy.name_by_block.find(current);
+        if (name_it != hierarchy.name_by_block.end() &&
+            parseMultishaderPrefix(name_it->second)) {
+            return name_it->second;
+        }
+    }
     return {};
 }
 
@@ -675,11 +689,10 @@ NifImportResult importNif(const NifImportOptions& options) {
     try {
         auto nif = lu::assets::nif_parse(std::span<const uint8_t>(data.data(), data.size()));
         auto extracted = lu::assets::extractNifRenderGeometry(nif);
-        std::string nif_shader_metadata = collectNifShaderMetadata(nif);
-        std::string nif_shader_metadata_fallback = uniqueNifShaderMetadata(nif_shader_metadata);
         const bool nif_has_material_color_controller =
             fileContainsAscii(std::span<const uint8_t>(data.data(), data.size()), "NiMaterialColorController");
         auto emissive_controllers = collectMaterialEmissiveControllers(nif);
+        const NifNodeHierarchy nif_hierarchy = buildNifNodeHierarchy(nif);
         std::filesystem::path res_root = ShaderDatabase::normalizeClientRoot(options.client_root);
         std::optional<ShaderDatabase> shader_database = ShaderDatabase::loadFromClientRoot(res_root);
         std::string nif_asset_path = ShaderDatabase::assetPathRelativeToRes(res_root, options.nif_path);
@@ -691,16 +704,10 @@ NifImportResult importNif(const NifImportOptions& options) {
             resolved_shader.shader = fallbackShaderInfo();
             resolved_shader.policy = shaderPolicyFromInfo(resolved_shader.shader);
             if (shader_database) {
-                resolved_shader = shader_database->resolveAssetMeshShader(nif_asset_path, mesh.name);
-                if (!resolved_shader.resolved) {
-                    ResolvedLuShader nif_shader = shader_database->resolveNifMaterialShader(mesh.material.name);
-                    if (!nif_shader.resolved && !nif_shader_metadata_fallback.empty()) {
-                        nif_shader = shader_database->resolveNifMaterialShader(nif_shader_metadata_fallback);
-                    }
-                    if (nif_shader.resolved || !nif_shader.metadata.empty()) {
-                        resolved_shader = std::move(nif_shader);
-                    }
-                }
+                resolved_shader = shader_database->resolveAssetMeshShader(
+                    nif_asset_path,
+                    mesh.name,
+                    nearestMultishaderParentName(nif_hierarchy, mesh.source_node_block));
             }
 
             MeshAsset out;

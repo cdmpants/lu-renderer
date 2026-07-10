@@ -333,6 +333,7 @@ int main() {
         {100, 100, "MultiShader"},
     }, {
         {"mesh\\minifig\\accessories\\minifig_accessory_knight_valiant.nif", 19},
+        {"mesh\\factionkit2\\minifig_accessory_spacerangerkit3_armor.nif", 19},
         {"mesh\\environment\\env_test_multishader.nif", 100},
     });
 
@@ -345,6 +346,16 @@ int main() {
     expect(direct_asset.policy.legopp_variant == LegoppShaderVariant::SuperEmissive, "CDClient direct asset uses SuperEmissive policy");
     expect(direct_asset.policy.alpha_semantic == ShaderAlphaSemantic::ControlEmissive, "CDClient SuperEmissive alpha is control data");
 
+    ResolvedLuShader armor_asset = fixture_database.resolveAssetMeshShader(
+        "mesh/factionkit2/minifig_accessory_spacerangerkit3_armor.nif",
+        "LOD_Shape0");
+    expect(armor_asset.resolved, "spaceranger armor resolves from CDClient");
+    expect(armor_asset.resolution_source == ShaderResolutionSource::CdClientAsset,
+        "spaceranger armor records authoritative CDClient source");
+    expect(armor_asset.shader.id == 19, "spaceranger armor uses CDClient SuperEmissive shader");
+    expect(armor_asset.policy.alpha_semantic == ShaderAlphaSemantic::ControlEmissive,
+        "spaceranger armor preserves control-alpha semantics");
+
     ResolvedLuShader multishader_asset = fixture_database.resolveAssetMeshShader(
         "mesh/environment/env_test_multishader.nif",
         "S38_lamp_glow");
@@ -354,6 +365,23 @@ int main() {
     expect(multishader_asset.resolution_source == ShaderResolutionSource::CdClientMultishaderPrefix, "CDClient multishader source");
     expect(multishader_asset.shader.id == 38, "CDClient multishader resolves prefix shader id");
     expect(multishader_asset.policy.alpha_semantic == ShaderAlphaSemantic::ControlGlow, "CDClient glow prefix alpha is control data");
+
+    ResolvedLuShader parent_prefixed_multishader = fixture_database.resolveAssetMeshShader(
+        "mesh/environment/env_test_multishader.nif",
+        "unprefixed_child",
+        "S19_armor_parent");
+    expect(parent_prefixed_multishader.resolved, "CDClient multishader resolves parent prefix");
+    expect(parent_prefixed_multishader.multishader_prefix_id == std::optional<int32_t>{19},
+        "CDClient multishader captures parent S prefix");
+    expect(parent_prefixed_multishader.shader.id == 19,
+        "CDClient multishader parent prefix selects submesh shader");
+
+    ResolvedLuShader child_prefixed_multishader = fixture_database.resolveAssetMeshShader(
+        "mesh/environment/env_test_multishader.nif",
+        "S38_child",
+        "S19_parent");
+    expect(child_prefixed_multishader.shader.id == 38,
+        "CDClient multishader child prefix is authoritative before parent prefix");
 
     ResolvedLuShader missing_prefix = fixture_database.resolveAssetMeshShader(
         "mesh/environment/env_test_multishader.nif",

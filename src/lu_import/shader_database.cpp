@@ -265,7 +265,8 @@ std::string ShaderDatabase::assetPathRelativeToRes(
 
 ResolvedLuShader ShaderDatabase::resolveAssetMeshShader(
     const std::string& asset_path,
-    const std::string& mesh_name) const {
+    const std::string& mesh_name,
+    const std::string& parent_object_name) const {
     ResolvedLuShader resolved = unresolvedShader();
 
     auto asset_it = shader_id_by_asset_.find(normalizeAssetPath(asset_path));
@@ -277,6 +278,9 @@ ResolvedLuShader ShaderDatabase::resolveAssetMeshShader(
     resolved.asset_is_multishader = shader_id == kMultishaderId;
     if (resolved.asset_is_multishader) {
         resolved.multishader_prefix_id = parseMultishaderPrefix(mesh_name);
+        if (!resolved.multishader_prefix_id && !parent_object_name.empty()) {
+            resolved.multishader_prefix_id = parseMultishaderPrefix(parent_object_name);
+        }
         if (!resolved.multishader_prefix_id) {
             return resolved;
         }

@@ -295,7 +295,9 @@ void main()
     }
 
     float shinyGlint = isShinyGlintVariant();
-    result = mix(result, applyShinyGlint(result, v_vertPos), shinyGlint);
+    if (shinyGlint > 0.5) {
+        result = applyShinyGlint(result, v_vertPos);
+    }
 
     if (u_luShaderFlags.w >= 0.0 && result.a < u_luShaderFlags.w) {
         discard;

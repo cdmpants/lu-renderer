@@ -82,7 +82,8 @@ public:
 
     ResolvedLuShader resolveAssetMeshShader(
         const std::string& asset_path,
-        const std::string& mesh_name) const;
+        const std::string& mesh_name,
+        const std::string& parent_object_name = {}) const;
 
     std::optional<LuShaderInfo> shaderInfo(int32_t shader_id) const;
     std::optional<LuShaderInfo> shaderInfoByGameValue(int32_t game_value) const;
