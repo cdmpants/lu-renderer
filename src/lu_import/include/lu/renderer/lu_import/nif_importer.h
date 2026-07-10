@@ -24,5 +24,6 @@ NifImportResult importNif(const NifImportOptions& options);
 // already stored on material. Exposed so render-state regressions can be tested
 // without depending on a machine-local NIF fixture.
 void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy& policy);
+bool nifVertexColorsAreEffective(const MaterialAsset& material);
 
 } // namespace lu::renderer::lu_import

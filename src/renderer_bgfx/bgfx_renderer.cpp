@@ -529,6 +529,66 @@ uint64_t blendFactorState(uint8_t factor) {
     }
 }
 
+uint32_t stencilTestState(uint8_t function) {
+    switch (function) {
+    case 0: return BGFX_STENCIL_TEST_NEVER;
+    case 1: return BGFX_STENCIL_TEST_LESS;
+    case 2: return BGFX_STENCIL_TEST_EQUAL;
+    case 3: return BGFX_STENCIL_TEST_LEQUAL;
+    case 4: return BGFX_STENCIL_TEST_GREATER;
+    case 5: return BGFX_STENCIL_TEST_NOTEQUAL;
+    case 6: return BGFX_STENCIL_TEST_GEQUAL;
+    case 7: return BGFX_STENCIL_TEST_ALWAYS;
+    default: return BGFX_STENCIL_TEST_ALWAYS;
+    }
+}
+
+uint32_t stencilFailOp(uint8_t action) {
+    switch (action) {
+    case 0: return BGFX_STENCIL_OP_FAIL_S_KEEP;
+    case 1: return BGFX_STENCIL_OP_FAIL_S_ZERO;
+    case 2: return BGFX_STENCIL_OP_FAIL_S_REPLACE;
+    case 3: return BGFX_STENCIL_OP_FAIL_S_INCRSAT;
+    case 4: return BGFX_STENCIL_OP_FAIL_S_DECRSAT;
+    case 5: return BGFX_STENCIL_OP_FAIL_S_INVERT;
+    default: return BGFX_STENCIL_OP_FAIL_S_KEEP;
+    }
+}
+
+uint32_t stencilZFailOp(uint8_t action) {
+    switch (action) {
+    case 0: return BGFX_STENCIL_OP_FAIL_Z_KEEP;
+    case 1: return BGFX_STENCIL_OP_FAIL_Z_ZERO;
+    case 2: return BGFX_STENCIL_OP_FAIL_Z_REPLACE;
+    case 3: return BGFX_STENCIL_OP_FAIL_Z_INCRSAT;
+    case 4: return BGFX_STENCIL_OP_FAIL_Z_DECRSAT;
+    case 5: return BGFX_STENCIL_OP_FAIL_Z_INVERT;
+    default: return BGFX_STENCIL_OP_FAIL_Z_KEEP;
+    }
+}
+
+uint32_t stencilPassOp(uint8_t action) {
+    switch (action) {
+    case 0: return BGFX_STENCIL_OP_PASS_Z_KEEP;
+    case 1: return BGFX_STENCIL_OP_PASS_Z_ZERO;
+    case 2: return BGFX_STENCIL_OP_PASS_Z_REPLACE;
+    case 3: return BGFX_STENCIL_OP_PASS_Z_INCRSAT;
+    case 4: return BGFX_STENCIL_OP_PASS_Z_DECRSAT;
+    case 5: return BGFX_STENCIL_OP_PASS_Z_INVERT;
+    default: return BGFX_STENCIL_OP_PASS_Z_KEEP;
+    }
+}
+
+uint32_t stencilStateForMaterial(const MaterialAsset& material) {
+    if (!material.stencil_enabled) return BGFX_STENCIL_NONE;
+    return BGFX_STENCIL_FUNC_REF(material.stencil_reference) |
+           BGFX_STENCIL_FUNC_RMASK(material.stencil_read_mask) |
+           stencilTestState(material.stencil_test_function) |
+           stencilFailOp(material.stencil_fail_action) |
+           stencilZFailOp(material.stencil_z_fail_action) |
+           stencilPassOp(material.stencil_pass_action);
+}
+
 std::string shortText(const std::string& value, size_t max_chars) {
     if (value.size() <= max_chars) return value;
     if (max_chars <= 3) return value.substr(0, max_chars);
@@ -1529,6 +1589,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
         bgfx::setUniform(u_lu_bbb_light_color2_, bbb_light_color2);
 
         bgfx::setState(renderStateForMaterial(mesh.material));
+        bgfx::setStencil(stencilStateForMaterial(mesh.material));
         bgfx::submit(kViewWorld, programForMaterial(mesh.material));
 
         const bool depth_prepass_material = participatesInDepthPrepass(mesh.material);
@@ -2214,6 +2275,7 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
             bgfx::setUniform(u_lu_bbb_light_color1_, bbb_light_color1);
             bgfx::setUniform(u_lu_bbb_light_color2_, bbb_light_color2);
             bgfx::setState(renderStateForMaterial(mesh.material));
+            bgfx::setStencil(stencilStateForMaterial(mesh.material));
             bgfx::submit(view_id, programForMaterial(mesh.material));
         }
     }

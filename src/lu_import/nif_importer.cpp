@@ -741,6 +741,14 @@ void applyMetallicGeometryVariant(MaterialAsset& material, bool has_vertex_color
 
 } // namespace
 
+bool nifVertexColorsAreEffective(const MaterialAsset& material) {
+    if (!material.mesh_has_vertex_colors) return false;
+    const NifVertexColorState& vertex_color = material.nif_resolved_state.vertex_color;
+    return !vertex_color.present ||
+           vertex_color.source_vertex_mode == 1u ||
+           vertex_color.source_vertex_mode == 2u;
+}
+
 void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy& policy) {
     const NifAlphaState& nif_alpha = material.nif_resolved_state.alpha;
     const NifZBufferState& nif_z = material.nif_resolved_state.z_buffer;
@@ -748,6 +756,7 @@ void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy&
 
     material.lu_shader_uses_ni_render_state = use_nif_state;
     material.alpha_mode = policy.alpha_mode;
+    material.cull_mode = policy.cull_mode;
     material.depth_write = policy.depth_write;
     material.depth_test = true;
     material.depth_test_function = 1;
@@ -755,6 +764,13 @@ void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy&
     material.destination_blend = 7;
     material.alpha_test_function = 6;
     material.disable_transparent_sort = false;
+    material.stencil_enabled = false;
+    material.stencil_fail_action = 0;
+    material.stencil_z_fail_action = 0;
+    material.stencil_pass_action = 0;
+    material.stencil_test_function = 7;
+    material.stencil_reference = 0;
+    material.stencil_read_mask = 0xff;
 
     const bool technique_blend =
         policy.force_alpha_blend ||
@@ -789,6 +805,27 @@ void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy&
         material.nif_resolved_state.sorting_mode == 1u) {
         material.disable_transparent_sort = true;
     }
+    const NifStencilState& nif_stencil = material.nif_resolved_state.stencil;
+    if (use_nif_state && nif_stencil.present) {
+        material.stencil_enabled = nif_stencil.enabled;
+        material.stencil_fail_action = nif_stencil.fail_action;
+        material.stencil_z_fail_action = nif_stencil.z_fail_action;
+        material.stencil_pass_action = nif_stencil.pass_action;
+        material.stencil_test_function = nif_stencil.test_function;
+        material.stencil_reference = static_cast<uint8_t>(nif_stencil.reference & 0xffu);
+        material.stencil_read_mask = static_cast<uint8_t>(nif_stencil.mask & 0xffu);
+        switch (nif_stencil.draw_mode) {
+        case 1: material.cull_mode = RenderCullMode::Clockwise; break;
+        case 2: material.cull_mode = RenderCullMode::CounterClockwise; break;
+        case 3: material.cull_mode = RenderCullMode::TwoSided; break;
+        default: break;
+        }
+    }
+
+    material.lu_shader_uses_specular =
+        policy.uses_specular &&
+        (!material.nif_resolved_state.has_specular ||
+         material.nif_resolved_state.specular_enabled);
 
     if (material.alpha_mode == RenderAlphaMode::Opaque) {
         if (material.alpha_blend) {
@@ -1024,14 +1061,18 @@ NifImportResult importNif(const NifImportOptions& options) {
                     mesh.material.glow_texture_has_clamp_mode,
                     mesh.material.glow_texture_clamp_mode),
                 uv0_tiling);
+            out.material.nif_vertex_colors_effective = nifVertexColorsAreEffective(out.material);
+            out.material.lu_shader_uses_vertex_color =
+                resolved_shader.policy.uses_vertex_color &&
+                out.material.nif_vertex_colors_effective;
             applyLegoppGeometryVariant(
                 out.material,
-                mesh.has_vertex_colors,
+                out.material.nif_vertex_colors_effective,
                 !out.material.diffuse_texture_path.empty(),
                 mesh.is_skinned);
             applyMetallicGeometryVariant(
                 out.material,
-                mesh.has_vertex_colors,
+                out.material.nif_vertex_colors_effective,
                 !out.material.diffuse_texture_path.empty(),
                 mesh.is_skinned);
 

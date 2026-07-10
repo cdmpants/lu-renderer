@@ -105,6 +105,29 @@ destination factors map individually, all eight comparison functions are
 supported, reference zero remains valid, and the no-sort bit plus inherited
 `NiSortAdjustNode` sorting-off mode are honored.
 
+`NiVertexColorProperty` is also independent from the existence of a color
+stream. `SourceVertexMode=Ignore` prevents that stream from selecting or
+feeding a vertex-color technique. `SourceVertexMode=Emissive` and
+`SourceVertexMode=AmbientDiffuse` permit it, but cannot invent a stream that is
+not present. The selected LU technique still decides whether RGB/alpha are
+diffuse color, output alpha, emissive control, glow control, or another effect
+input. An evenly distributed sample of the 10,534 LU mesh NIFs found only the
+two normal authoring combinations: flags 8 (source ignored, no stream) and
+flags 40 (ambient/diffuse source with full lighting, stream present).
+
+`NiSpecularProperty` gates the specular term of a technique that supports
+specular; it never adds specular to a no-specular technique. An absent property
+leaves the technique policy unchanged. This distinction matters for shader 1
+assets: many contain a disabled property, while a smaller set explicitly
+enable it.
+
+`NiStencilProperty` supplies the stencil comparison, reference, read mask, and
+fail/depth-fail/pass operations. LU's D3D stencil buffer is represented by the
+low eight bits in bgfx. Its draw mode also controls face culling even when the
+stencil test itself is disabled. The sampled LU stencil fixture,
+`mesh/env/sound_trigger_sphere.nif`, uses `DRAW_BOTH` and is therefore rendered
+two-sided instead of retaining the generic backface-cull policy.
+
 `lu_shader_audit --per-mesh` reports the node path, property provenance, decoded
 state, vertex-alpha range, texture alpha-format hint, requested state, and the
 state the current backend actually submits.
@@ -121,6 +144,12 @@ Current real-asset evidence:
   They therefore use source-alpha/inverse-source-alpha blending and retain the
   technique's default depth write instead of losing it to a transparency
   classification.
+
+Remaining format limitations are explicit: transparent ordering is stable
+whole-mesh bounds-center sorting rather than triangle sorting, and flat
+`NiShadeProperty` rendering would require face-normal geometry expansion. No
+flat-shaded property was found in the representative LU asset sample, so that
+geometry rewrite is not enabled without a real fixture.
 
 ## Known Real-Asset Contracts
 

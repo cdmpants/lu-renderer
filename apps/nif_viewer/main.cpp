@@ -558,6 +558,7 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " prefix=" << material.lu_multishader_prefix_id
             << " vc=" << boolText(material.lu_shader_uses_vertex_color)
             << " meshVC=" << boolText(material.mesh_has_vertex_colors)
+            << " nifVCUse=" << boolText(material.nif_vertex_colors_effective)
             << " shaderTex=" << boolText(material.lu_shader_uses_texture)
             << " matDiffuse=" << boolText(material.lu_shader_uses_material_diffuse)
             << " fog=" << boolText(material.lu_shader_uses_fog)
@@ -588,6 +589,13 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << ":" << static_cast<int>(material.depth_test_function)
             << " submittedZ=" << boolText(submitted_state.submitted_depth_write)
             << " noSort=" << boolText(material.disable_transparent_sort)
+            << " stencil=" << boolText(material.stencil_enabled)
+            << ":" << static_cast<int>(material.stencil_test_function)
+            << ":" << static_cast<int>(material.stencil_reference)
+            << ":" << static_cast<int>(material.stencil_read_mask)
+            << ":" << static_cast<int>(material.stencil_fail_action)
+            << "/" << static_cast<int>(material.stencil_z_fail_action)
+            << "/" << static_cast<int>(material.stencil_pass_action)
             << " cull=" << cullModeName(material.cull_mode)
             << " nifAlpha=" << material.nif_resolved_state.alpha.raw_flags
             << ":blend" << boolText(material.nif_resolved_state.alpha.blend_enabled)

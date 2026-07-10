@@ -1200,6 +1200,62 @@ int main() {
     expect(!alpha_value_only_material.alpha_blend,
         "material alpha alone never promotes an opaque technique to blending");
 
+    MaterialAsset vertex_color_material;
+    vertex_color_material.mesh_has_vertex_colors = true;
+    vertex_color_material.nif_resolved_state.vertex_color.present = true;
+    vertex_color_material.nif_resolved_state.vertex_color.source_vertex_mode = 0;
+    expect(!nifVertexColorsAreEffective(vertex_color_material),
+        "NiVertexColor source-ignore rejects an otherwise present vertex-color stream");
+    vertex_color_material.nif_resolved_state.vertex_color.source_vertex_mode = 2;
+    expect(nifVertexColorsAreEffective(vertex_color_material),
+        "NiVertexColor ambient/diffuse mode enables the authored vertex-color stream");
+    vertex_color_material.nif_resolved_state.vertex_color.present = false;
+    expect(nifVertexColorsAreEffective(vertex_color_material),
+        "a stream remains usable when no NiVertexColor override is authored");
+    vertex_color_material.mesh_has_vertex_colors = false;
+    expect(!nifVertexColorsAreEffective(vertex_color_material),
+        "NiVertexColor mode cannot invent a missing vertex-color stream");
+
+    MaterialAsset property_state_material;
+    property_state_material.nif_resolved_state.has_specular = true;
+    property_state_material.nif_resolved_state.specular_enabled = false;
+    property_state_material.nif_resolved_state.stencil.present = true;
+    property_state_material.nif_resolved_state.stencil.enabled = true;
+    property_state_material.nif_resolved_state.stencil.fail_action = 2;
+    property_state_material.nif_resolved_state.stencil.z_fail_action = 3;
+    property_state_material.nif_resolved_state.stencil.pass_action = 5;
+    property_state_material.nif_resolved_state.stencil.test_function = 4;
+    property_state_material.nif_resolved_state.stencil.reference = 0x123u;
+    property_state_material.nif_resolved_state.stencil.mask = 0x1ffu;
+    property_state_material.nif_resolved_state.stencil.draw_mode = 3;
+    ni_state_policy.uses_specular = true;
+    applyEffectiveNifRenderState(property_state_material, ni_state_policy);
+    expect(!property_state_material.lu_shader_uses_specular,
+        "disabled NiSpecularProperty gates a specular-capable technique");
+    expect(property_state_material.stencil_enabled &&
+           property_state_material.stencil_fail_action == 2 &&
+           property_state_material.stencil_z_fail_action == 3 &&
+           property_state_material.stencil_pass_action == 5,
+        "enabled NiStencil actions survive effective-state resolution");
+    expect(property_state_material.stencil_test_function == 4 &&
+           property_state_material.stencil_reference == 0x23u &&
+           property_state_material.stencil_read_mask == 0xffu,
+        "NiStencil comparison state is narrowed to the GPU's eight-bit stencil buffer");
+    expect(property_state_material.cull_mode == RenderCullMode::TwoSided,
+        "NiStencil DRAW_BOTH overrides technique backface culling");
+    property_state_material.nif_resolved_state.specular_enabled = true;
+    applyEffectiveNifRenderState(property_state_material, ni_state_policy);
+    expect(property_state_material.lu_shader_uses_specular,
+        "enabled NiSpecularProperty preserves a specular-capable technique");
+
+    MaterialAsset ignored_property_state;
+    ignored_property_state.nif_resolved_state.stencil = property_state_material.nif_resolved_state.stencil;
+    technique_owned_policy.uses_specular = true;
+    applyEffectiveNifRenderState(ignored_property_state, technique_owned_policy);
+    expect(!ignored_property_state.stencil_enabled &&
+           ignored_property_state.cull_mode == RenderCullMode::Backface,
+        "UsesNiRenderState=false ignores NiStencil render state");
+
     MaterialAsset requested_blended_depth_write;
     requested_blended_depth_write.alpha_mode = RenderAlphaMode::AlphaBlend;
     requested_blended_depth_write.alpha_blend = true;

@@ -1052,6 +1052,7 @@ void printPerMeshRow(
               << " | " << material.lu_multishader_prefix_id
               << " | vc=" << boolText(material.lu_shader_uses_vertex_color)
               << ",meshvc=" << boolText(material.mesh_has_vertex_colors)
+              << ",nifvc=" << boolText(material.nif_vertex_colors_effective)
               << ",tex=" << boolText(material.lu_shader_uses_texture)
               << ",mat=" << boolText(material.lu_shader_uses_material_diffuse)
               << ",fog=" << boolText(material.lu_shader_uses_fog)
@@ -1112,6 +1113,9 @@ void printPerMeshRow(
               << " | present=" << boolText(material.nif_resolved_state.stencil.present)
               << ",raw=" << material.nif_resolved_state.stencil.raw_flags
               << ",enabled=" << boolText(material.nif_resolved_state.stencil.enabled)
+              << ",fail=" << static_cast<int>(material.nif_resolved_state.stencil.fail_action)
+              << ",zfail=" << static_cast<int>(material.nif_resolved_state.stencil.z_fail_action)
+              << ",pass=" << static_cast<int>(material.nif_resolved_state.stencil.pass_action)
               << ",draw=" << static_cast<int>(material.nif_resolved_state.stencil.draw_mode)
               << ",func=" << static_cast<int>(material.nif_resolved_state.stencil.test_function)
               << ",ref=" << material.nif_resolved_state.stencil.reference
@@ -1138,6 +1142,13 @@ void printPerMeshRow(
               << ",testFunc=" << testFunctionName(lu::renderer::currentRenderStateDiagnostic(material).shader_alpha_test_function)
               << ",ref=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).shader_alpha_reference)
               << ",noSort=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).transparent_sort_disabled)
+              << ",stencil=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil)
+              << ",stencilOps=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_fail_action)
+              << "/" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_z_fail_action)
+              << "/" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_pass_action)
+              << ",stencilFunc=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_test_function)
+              << ",stencilRef=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_reference)
+              << ",stencilMask=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).submitted_stencil_read_mask)
               << "\n";
 }
 

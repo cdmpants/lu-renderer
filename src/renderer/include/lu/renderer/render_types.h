@@ -323,6 +323,7 @@ struct MaterialAsset {
     bool lu_shader_asset_is_multishader = false;
     int32_t lu_multishader_prefix_id = -1;
     bool mesh_has_vertex_colors = false;
+    bool nif_vertex_colors_effective = false;
     bool lu_shader_uses_vertex_color = false;
     bool lu_shader_uses_texture = true;
     bool lu_shader_uses_material_diffuse = false;
@@ -379,6 +380,13 @@ struct MaterialAsset {
     bool alpha_test = false;
     uint8_t alpha_test_function = 6;
     bool disable_transparent_sort = false;
+    bool stencil_enabled = false;
+    uint8_t stencil_fail_action = 0;
+    uint8_t stencil_z_fail_action = 0;
+    uint8_t stencil_pass_action = 0;
+    uint8_t stencil_test_function = 7;
+    uint8_t stencil_reference = 0;
+    uint8_t stencil_read_mask = 0xff;
     bool has_alpha_property = false;
     uint16_t alpha_flags = 0;
     uint8_t alpha_threshold = 0;
@@ -403,6 +411,13 @@ struct CurrentRenderStateDiagnostic {
     uint8_t shader_alpha_test_function = 6;
     uint8_t shader_alpha_reference = 0;
     bool transparent_sort_disabled = false;
+    bool submitted_stencil = false;
+    uint8_t submitted_stencil_fail_action = 0;
+    uint8_t submitted_stencil_z_fail_action = 0;
+    uint8_t submitted_stencil_pass_action = 0;
+    uint8_t submitted_stencil_test_function = 7;
+    uint8_t submitted_stencil_reference = 0;
+    uint8_t submitted_stencil_read_mask = 0xff;
 };
 
 inline CurrentRenderStateDiagnostic currentRenderStateDiagnostic(const MaterialAsset& material) {
@@ -425,6 +440,13 @@ inline CurrentRenderStateDiagnostic currentRenderStateDiagnostic(const MaterialA
     state.shader_alpha_test_function = material.alpha_test_function;
     state.shader_alpha_reference = material.alpha_threshold;
     state.transparent_sort_disabled = material.disable_transparent_sort;
+    state.submitted_stencil = material.stencil_enabled;
+    state.submitted_stencil_fail_action = material.stencil_fail_action;
+    state.submitted_stencil_z_fail_action = material.stencil_z_fail_action;
+    state.submitted_stencil_pass_action = material.stencil_pass_action;
+    state.submitted_stencil_test_function = material.stencil_test_function;
+    state.submitted_stencil_reference = material.stencil_reference;
+    state.submitted_stencil_read_mask = material.stencil_read_mask;
     return state;
 }
 
