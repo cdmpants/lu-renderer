@@ -110,6 +110,90 @@ enum class ShaderAlphaSemantic {
     Ignored
 };
 
+struct NifPropertySource {
+    bool present = false;
+    uint32_t property_block = 0;
+    uint32_t owner_node_block = 0;
+    uint32_t inheritance_depth = 0;
+    uint32_t duplicates_on_owner = 0;
+};
+
+struct NifPropertySources {
+    NifPropertySource material;
+    NifPropertySource texturing;
+    NifPropertySource alpha;
+    NifPropertySource vertex_color;
+    NifPropertySource z_buffer;
+    NifPropertySource specular;
+    NifPropertySource shade;
+    NifPropertySource stencil;
+};
+
+struct NifAlphaState {
+    bool present = false;
+    uint16_t raw_flags = 0;
+    uint8_t threshold = 0;
+    bool blend_enabled = false;
+    uint8_t source_blend = 0;
+    uint8_t destination_blend = 0;
+    bool test_enabled = false;
+    uint8_t test_function = 0;
+    bool no_sorter = false;
+};
+
+struct NifZBufferState {
+    bool present = false;
+    uint16_t raw_flags = 3;
+    bool test_enabled = true;
+    bool write_enabled = true;
+    uint8_t test_function = 0;
+};
+
+struct NifVertexColorState {
+    bool present = false;
+    uint16_t raw_flags = 0;
+    uint8_t color_mode = 0;
+    uint8_t lighting_mode = 1;
+    uint8_t source_vertex_mode = 2;
+};
+
+struct NifStencilState {
+    bool present = false;
+    uint16_t raw_flags = 0;
+    bool enabled = false;
+    uint8_t fail_action = 0;
+    uint8_t z_fail_action = 0;
+    uint8_t pass_action = 0;
+    uint8_t draw_mode = 0;
+    uint8_t test_function = 0;
+    uint32_t reference = 0;
+    uint32_t mask = 0xFFFFFFFFu;
+};
+
+struct NifAuthoredRenderState {
+    NifPropertySources sources;
+    NifAlphaState alpha;
+    NifZBufferState z_buffer;
+    NifVertexColorState vertex_color;
+    NifStencilState stencil;
+    bool has_specular = false;
+    uint16_t specular_flags = 0;
+    bool specular_enabled = false;
+    bool has_shade = false;
+    uint16_t shade_flags = 1;
+    bool smooth_shading = true;
+    bool has_sort_adjust = false;
+    uint32_t sort_adjust_node_block = 0;
+    uint32_t sort_adjust_inheritance_depth = 0;
+    uint32_t sorting_mode = 0;
+};
+
+struct NifNodePathEntry {
+    uint32_t block_index = 0;
+    std::string name;
+    std::string type_name;
+};
+
 struct DirectionalLight {
     Vec3 position = {1.0f, 1.0f, 1.0f};
     Vec3 direction = normalize({1.0f, 1.0f, 1.0f});
@@ -234,6 +318,7 @@ struct MaterialAsset {
     std::string lu_shader_validation_status_note;
     ShaderPortStatus lu_shader_port_status = ShaderPortStatus::Unported;
     ShaderAlphaSemantic lu_shader_alpha_semantic = ShaderAlphaSemantic::Unknown;
+    bool lu_shader_uses_ni_render_state = true;
     bool lu_shader_resolved = false;
     bool lu_shader_asset_is_multishader = false;
     int32_t lu_multishader_prefix_id = -1;
@@ -271,10 +356,14 @@ struct MaterialAsset {
     RenderAlphaMode alpha_mode = RenderAlphaMode::Opaque;
     RenderCullMode cull_mode = RenderCullMode::Backface;
     bool depth_write = true;
+    bool depth_test = true;
+    uint8_t depth_test_function = 1;
     Vec4 diffuse = {0.7f, 0.7f, 0.7f, 1.0f};
     Vec3 ambient = {0.25f, 0.25f, 0.25f};
     Vec3 emissive = {0.0f, 0.0f, 0.0f};
     std::string diffuse_texture_path;
+    bool nif_diffuse_texture_has_alpha_format = false;
+    uint32_t nif_diffuse_texture_alpha_format = 0;
     TextureAddressMode diffuse_texture_address;
     std::string dark_texture_path;
     TextureAddressMode dark_texture_address;
@@ -285,17 +374,70 @@ struct MaterialAsset {
     std::string glow_texture_path;
     TextureAddressMode glow_texture_address;
     bool alpha_blend = false;
+    uint8_t source_blend = 6;
+    uint8_t destination_blend = 7;
     bool alpha_test = false;
+    uint8_t alpha_test_function = 6;
+    bool disable_transparent_sort = false;
     bool has_alpha_property = false;
     uint16_t alpha_flags = 0;
     uint8_t alpha_threshold = 0;
+    NifPropertySources nif_direct_property_sources;
+    NifAuthoredRenderState nif_resolved_state;
+    float nif_vertex_alpha_min = 1.0f;
+    float nif_vertex_alpha_max = 1.0f;
+    uint32_t nif_vertex_alpha_non_opaque_count = 0;
 };
+
+struct CurrentRenderStateDiagnostic {
+    bool transparent_classification = false;
+    bool requested_depth_write = true;
+    bool submitted_depth_write = true;
+    bool submitted_depth_test = true;
+    uint8_t submitted_depth_test_function = 1;
+    bool submitted_alpha_blend = false;
+    bool submitted_additive_blend = false;
+    uint8_t submitted_source_blend = 6;
+    uint8_t submitted_destination_blend = 7;
+    bool shader_alpha_test = false;
+    uint8_t shader_alpha_test_function = 6;
+    uint8_t shader_alpha_reference = 0;
+    bool transparent_sort_disabled = false;
+};
+
+inline CurrentRenderStateDiagnostic currentRenderStateDiagnostic(const MaterialAsset& material) {
+    CurrentRenderStateDiagnostic state;
+    state.transparent_classification =
+        material.alpha_mode == RenderAlphaMode::AlphaBlend ||
+        material.alpha_mode == RenderAlphaMode::Additive ||
+        material.alpha_blend;
+    state.requested_depth_write = material.depth_write;
+    state.submitted_depth_write = material.depth_write;
+    state.submitted_depth_test = material.depth_test;
+    state.submitted_depth_test_function = material.depth_test_function;
+    state.submitted_additive_blend = material.alpha_mode == RenderAlphaMode::Additive;
+    state.submitted_alpha_blend = !state.submitted_additive_blend &&
+        (material.alpha_blend || material.alpha_mode == RenderAlphaMode::AlphaBlend);
+    state.submitted_source_blend = material.source_blend;
+    state.submitted_destination_blend = material.destination_blend;
+    state.shader_alpha_test = material.alpha_test ||
+        material.alpha_mode == RenderAlphaMode::AlphaTest;
+    state.shader_alpha_test_function = material.alpha_test_function;
+    state.shader_alpha_reference = material.alpha_threshold;
+    state.transparent_sort_disabled = material.disable_transparent_sort;
+    return state;
+}
 
 struct MeshAsset {
     std::string name;
     std::vector<Vertex> vertices;
     std::vector<uint32_t> indices;
     MaterialAsset material;
+    uint32_t source_mesh_block = 0;
+    uint32_t source_node_block = 0;
+    std::vector<NifNodePathEntry> source_node_chain;
+    bool parent_cycle_detected = false;
+    bool multiple_parents_detected = false;
     bool has_lod_range = false;
     uint32_t lod_parent_block = 0;
     uint32_t lod_level = 0;

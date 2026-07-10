@@ -1,6 +1,7 @@
 $input v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos
 
 #include <bgfx_shader.sh>
+#include "alpha_test.sh"
 
 SAMPLER2D(s_diffuse, 0);
 SAMPLER2D(s_dark, 2);
@@ -30,7 +31,7 @@ void main()
     texColor += texture2D(s_dark, layer2Uv) * u_materialDiffuse.g;
 
     vec4 color = texColor * v_color0;
-    if (u_luShaderFlags.w >= 0.0 && color.a < u_luShaderFlags.w) {
+    if (!luAlphaTestPass(color.a)) {
         discard;
     }
 

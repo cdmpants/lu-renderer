@@ -1,6 +1,7 @@
 $input v_normal, v_texcoord0, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular
 
 #include <bgfx_shader.sh>
+#include "alpha_test.sh"
 
 SAMPLER2D(s_diffuse, 0);
 
@@ -43,7 +44,7 @@ void main()
     color *= v_diffuse;
     color.a *= alphaMod;
 
-    if (u_luShaderFlags.w >= 0.0 && color.a < u_luShaderFlags.w) {
+    if (!luAlphaTestPass(color.a)) {
         discard;
     }
 

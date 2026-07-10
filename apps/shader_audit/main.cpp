@@ -948,10 +948,64 @@ std::string textureName(const std::string& path) {
     return std::filesystem::path(path).filename().string();
 }
 
+const char* blendFactorName(uint8_t value) {
+    static constexpr const char* names[] = {
+        "one", "zero", "srcColor", "invSrcColor", "dstColor", "invDstColor",
+        "srcAlpha", "invSrcAlpha", "dstAlpha", "invDstAlpha", "srcAlphaSat"
+    };
+    return value < std::size(names) ? names[value] : "invalid";
+}
+
+const char* testFunctionName(uint8_t value) {
+    static constexpr const char* names[] = {
+        "always", "less", "equal", "lessEqual", "greater", "notEqual",
+        "greaterEqual", "never"
+    };
+    return value < std::size(names) ? names[value] : "invalid";
+}
+
+const char* alphaFormatName(uint32_t value) {
+    switch (value) {
+    case 0: return "none";
+    case 1: return "binary";
+    case 2: return "smooth";
+    case 3: return "default";
+    default: return "unknown";
+    }
+}
+
+std::string propertySourceText(const lu::renderer::NifPropertySource& source) {
+    if (!source.present) return "-";
+    std::ostringstream stream;
+    stream << (source.inheritance_depth == 0 ? "direct" : "inherited")
+           << "#" << source.property_block
+           << "@node" << source.owner_node_block
+           << ":depth" << source.inheritance_depth;
+    if (source.duplicates_on_owner > 0) {
+        stream << ":duplicates" << source.duplicates_on_owner;
+    }
+    return stream.str();
+}
+
+std::string nodePathText(const lu::renderer::MeshAsset& mesh) {
+    if (mesh.source_node_chain.empty()) return "-";
+    std::ostringstream stream;
+    for (size_t i = 0; i < mesh.source_node_chain.size(); ++i) {
+        if (i > 0) stream << "<-";
+        const auto& node = mesh.source_node_chain[i];
+        stream << (node.name.empty() ? node.type_name : node.name) << "#" << node.block_index;
+    }
+    if (mesh.parent_cycle_detected) stream << "[cycle]";
+    if (mesh.multiple_parents_detected) stream << "[multi-parent]";
+    return stream.str();
+}
+
 void printPerMeshHeader() {
     std::cout << "asset | mesh | id/gv | label | variant | program | port | fxCheck | fx | technique | sourceNote | validationNote"
-              << " | alpha | alphaSemantic | cull | zwrite | blend | test | nifAlpha | resolved | source | metadata"
-              << " | multi | prefix | flags | textures | material\n";
+              << " | alpha | alphaSemantic | cull | zwrite | blend | test | effectiveState | nifAlpha | resolved | source | metadata"
+              << " | multi | prefix | flags | textures | material"
+              << " | nodePath | propertySources | decodedAlpha | decodedZ | vertexColorProperty"
+              << " | specShade | stencil | sort | vertexAlpha | textureAlpha | currentSubmitted\n";
 }
 
 void printPerMeshRow(
@@ -981,6 +1035,13 @@ void printPerMeshRow(
               << " | " << boolText(material.depth_write)
               << " | " << boolText(material.alpha_blend)
               << " | " << boolText(material.alpha_test)
+              << " | usesNi=" << boolText(material.lu_shader_uses_ni_render_state)
+              << ",depthTest=" << boolText(material.depth_test)
+              << ",depthFunc=" << testFunctionName(material.depth_test_function)
+              << ",src=" << blendFactorName(material.source_blend)
+              << ",dst=" << blendFactorName(material.destination_blend)
+              << ",testFunc=" << testFunctionName(material.alpha_test_function)
+              << ",noSort=" << boolText(material.disable_transparent_sort)
               << " | " << boolText(material.has_alpha_property)
               << "/" << material.alpha_flags
               << "/" << static_cast<int>(material.alpha_threshold)
@@ -1016,6 +1077,67 @@ void printPerMeshRow(
               << material.material_emissive_controller_default.z
               << ",emctrlRange=" << material.material_emissive_controller_start << "/"
               << material.material_emissive_controller_stop
+              << " | " << nodePathText(mesh)
+              << " | mat=" << propertySourceText(material.nif_resolved_state.sources.material)
+              << ",tex=" << propertySourceText(material.nif_resolved_state.sources.texturing)
+              << ",alpha=" << propertySourceText(material.nif_resolved_state.sources.alpha)
+              << ",vc=" << propertySourceText(material.nif_resolved_state.sources.vertex_color)
+              << ",z=" << propertySourceText(material.nif_resolved_state.sources.z_buffer)
+              << ",spec=" << propertySourceText(material.nif_resolved_state.sources.specular)
+              << ",shade=" << propertySourceText(material.nif_resolved_state.sources.shade)
+              << ",stencil=" << propertySourceText(material.nif_resolved_state.sources.stencil)
+              << " | present=" << boolText(material.nif_resolved_state.alpha.present)
+              << ",raw=" << material.nif_resolved_state.alpha.raw_flags
+              << ",blend=" << boolText(material.nif_resolved_state.alpha.blend_enabled)
+              << ",src=" << blendFactorName(material.nif_resolved_state.alpha.source_blend)
+              << ",dst=" << blendFactorName(material.nif_resolved_state.alpha.destination_blend)
+              << ",test=" << boolText(material.nif_resolved_state.alpha.test_enabled)
+              << ",func=" << testFunctionName(material.nif_resolved_state.alpha.test_function)
+              << ",ref=" << static_cast<int>(material.nif_resolved_state.alpha.threshold)
+              << ",noSort=" << boolText(material.nif_resolved_state.alpha.no_sorter)
+              << " | present=" << boolText(material.nif_resolved_state.z_buffer.present)
+              << ",raw=" << material.nif_resolved_state.z_buffer.raw_flags
+              << ",test=" << boolText(material.nif_resolved_state.z_buffer.test_enabled)
+              << ",write=" << boolText(material.nif_resolved_state.z_buffer.write_enabled)
+              << ",func=" << testFunctionName(material.nif_resolved_state.z_buffer.test_function)
+              << " | present=" << boolText(material.nif_resolved_state.vertex_color.present)
+              << ",raw=" << material.nif_resolved_state.vertex_color.raw_flags
+              << ",colorMode=" << static_cast<int>(material.nif_resolved_state.vertex_color.color_mode)
+              << ",lightMode=" << static_cast<int>(material.nif_resolved_state.vertex_color.lighting_mode)
+              << ",sourceMode=" << static_cast<int>(material.nif_resolved_state.vertex_color.source_vertex_mode)
+              << " | spec=" << boolText(material.nif_resolved_state.has_specular)
+              << "/" << boolText(material.nif_resolved_state.specular_enabled)
+              << ",shade=" << boolText(material.nif_resolved_state.has_shade)
+              << "/" << (material.nif_resolved_state.smooth_shading ? "smooth" : "hard")
+              << " | present=" << boolText(material.nif_resolved_state.stencil.present)
+              << ",raw=" << material.nif_resolved_state.stencil.raw_flags
+              << ",enabled=" << boolText(material.nif_resolved_state.stencil.enabled)
+              << ",draw=" << static_cast<int>(material.nif_resolved_state.stencil.draw_mode)
+              << ",func=" << static_cast<int>(material.nif_resolved_state.stencil.test_function)
+              << ",ref=" << material.nif_resolved_state.stencil.reference
+              << ",mask=" << material.nif_resolved_state.stencil.mask
+              << " | adjust=" << boolText(material.nif_resolved_state.has_sort_adjust)
+              << ",node=" << material.nif_resolved_state.sort_adjust_node_block
+              << ",depth=" << material.nif_resolved_state.sort_adjust_inheritance_depth
+              << ",mode=" << material.nif_resolved_state.sorting_mode
+              << " | min=" << material.nif_vertex_alpha_min
+              << ",max=" << material.nif_vertex_alpha_max
+              << ",nonOpaque=" << material.nif_vertex_alpha_non_opaque_count
+              << " | authored=" << boolText(material.nif_diffuse_texture_has_alpha_format)
+              << "/" << alphaFormatName(material.nif_diffuse_texture_alpha_format)
+              << " | requestedZ=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).requested_depth_write)
+              << ",submittedZ=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).submitted_depth_write)
+              << ",depthTest=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).submitted_depth_test)
+              << ",depthFunc=" << testFunctionName(lu::renderer::currentRenderStateDiagnostic(material).submitted_depth_test_function)
+              << ",transparent=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).transparent_classification)
+              << ",alphaBlend=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).submitted_alpha_blend)
+              << ",src=" << blendFactorName(lu::renderer::currentRenderStateDiagnostic(material).submitted_source_blend)
+              << ",dst=" << blendFactorName(lu::renderer::currentRenderStateDiagnostic(material).submitted_destination_blend)
+              << ",additive=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).submitted_additive_blend)
+              << ",alphaTest=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).shader_alpha_test)
+              << ",testFunc=" << testFunctionName(lu::renderer::currentRenderStateDiagnostic(material).shader_alpha_test_function)
+              << ",ref=" << static_cast<int>(lu::renderer::currentRenderStateDiagnostic(material).shader_alpha_reference)
+              << ",noSort=" << boolText(lu::renderer::currentRenderStateDiagnostic(material).transparent_sort_disabled)
               << "\n";
 }
 

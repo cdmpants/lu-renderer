@@ -453,8 +453,7 @@ bool useColorInLegoppDiffuse(const MaterialAsset& material, bool has_texture) {
 
 float alphaThresholdForMaterial(const MaterialAsset& material) {
     if (material.alpha_test || material.alpha_mode == RenderAlphaMode::AlphaTest) {
-        const uint8_t threshold = material.alpha_threshold > 0 ? material.alpha_threshold : 127;
-        return static_cast<float>(threshold) / 255.0f;
+        return static_cast<float>(material.alpha_threshold) / 255.0f;
     }
     return -1.0f;
 }
@@ -482,15 +481,52 @@ bool usesLowLegoppSource(const MaterialAsset& material) {
 }
 
 bool isTransparentForwardMaterial(const MaterialAsset& material) {
-    return material.alpha_mode == RenderAlphaMode::AlphaBlend ||
-           material.alpha_mode == RenderAlphaMode::Additive ||
-           material.alpha_blend;
+    return currentRenderStateDiagnostic(material).transparent_classification;
 }
 
 bool participatesInDepthPrepass(const MaterialAsset& material) {
-    return material.depth_write &&
-           material.alpha_mode != RenderAlphaMode::AlphaBlend &&
-           material.alpha_mode != RenderAlphaMode::Additive;
+    return material.depth_write;
+}
+
+std::array<float, 4> alphaTestUniformForMaterial(const MaterialAsset& material) {
+    const bool enabled = material.alpha_test || material.alpha_mode == RenderAlphaMode::AlphaTest;
+    return {
+        enabled ? 1.0f : 0.0f,
+        static_cast<float>(material.alpha_threshold) / 255.0f,
+        static_cast<float>(material.alpha_test_function),
+        0.0f
+    };
+}
+
+uint64_t depthTestState(uint8_t function) {
+    switch (function) {
+    case 0: return BGFX_STATE_DEPTH_TEST_ALWAYS;
+    case 1: return BGFX_STATE_DEPTH_TEST_LESS;
+    case 2: return BGFX_STATE_DEPTH_TEST_EQUAL;
+    case 3: return BGFX_STATE_DEPTH_TEST_LEQUAL;
+    case 4: return BGFX_STATE_DEPTH_TEST_GREATER;
+    case 5: return BGFX_STATE_DEPTH_TEST_NOTEQUAL;
+    case 6: return BGFX_STATE_DEPTH_TEST_GEQUAL;
+    case 7: return BGFX_STATE_DEPTH_TEST_NEVER;
+    default: return BGFX_STATE_DEPTH_TEST_LESS;
+    }
+}
+
+uint64_t blendFactorState(uint8_t factor) {
+    switch (factor) {
+    case 0: return BGFX_STATE_BLEND_ONE;
+    case 1: return BGFX_STATE_BLEND_ZERO;
+    case 2: return BGFX_STATE_BLEND_SRC_COLOR;
+    case 3: return BGFX_STATE_BLEND_INV_SRC_COLOR;
+    case 4: return BGFX_STATE_BLEND_DST_COLOR;
+    case 5: return BGFX_STATE_BLEND_INV_DST_COLOR;
+    case 6: return BGFX_STATE_BLEND_SRC_ALPHA;
+    case 7: return BGFX_STATE_BLEND_INV_SRC_ALPHA;
+    case 8: return BGFX_STATE_BLEND_DST_ALPHA;
+    case 9: return BGFX_STATE_BLEND_INV_DST_ALPHA;
+    case 10: return BGFX_STATE_BLEND_SRC_ALPHA_SAT;
+    default: return BGFX_STATE_BLEND_ONE;
+    }
 }
 
 std::string shortText(const std::string& value, size_t max_chars) {
@@ -608,6 +644,7 @@ bool BgfxRenderer::init(const RendererInit& init) {
     u_lu_fog_color_ = bgfx::createUniform("u_luFogColor", bgfx::UniformType::Vec4);
     u_lu_fog_params_ = bgfx::createUniform("u_luFogParams", bgfx::UniformType::Vec4);
     u_lu_shader_flags_ = bgfx::createUniform("u_luShaderFlags", bgfx::UniformType::Vec4);
+    u_lu_alpha_test_ = bgfx::createUniform("u_luAlphaTest", bgfx::UniformType::Vec4);
     u_lu_variant_flags_ = bgfx::createUniform("u_luVariantFlags", bgfx::UniformType::Vec4);
     u_lu_pbr_params_ = bgfx::createUniform("u_luPbrParams", bgfx::UniformType::Vec4);
     u_lu_reflection_params_ = bgfx::createUniform("u_luReflectionParams", bgfx::UniformType::Vec4);
@@ -790,6 +827,7 @@ void BgfxRenderer::shutdown() {
     if (bgfx::isValid(u_lu_fog_color_)) bgfx::destroy(u_lu_fog_color_);
     if (bgfx::isValid(u_lu_fog_params_)) bgfx::destroy(u_lu_fog_params_);
     if (bgfx::isValid(u_lu_shader_flags_)) bgfx::destroy(u_lu_shader_flags_);
+    if (bgfx::isValid(u_lu_alpha_test_)) bgfx::destroy(u_lu_alpha_test_);
     if (bgfx::isValid(u_lu_variant_flags_)) bgfx::destroy(u_lu_variant_flags_);
     if (bgfx::isValid(u_lu_pbr_params_)) bgfx::destroy(u_lu_pbr_params_);
     if (bgfx::isValid(u_lu_reflection_params_)) bgfx::destroy(u_lu_reflection_params_);
@@ -1250,8 +1288,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
     if (directional_shadows_enabled) {
         for (const auto& mesh : meshes_) {
             if (!bgfx::isValid(mesh.vertex_buffer) || !bgfx::isValid(mesh.index_buffer)) continue;
-            if (!mesh.material.depth_write || mesh.material.alpha_mode == RenderAlphaMode::AlphaBlend ||
-                mesh.material.alpha_mode == RenderAlphaMode::Additive) {
+            if (!mesh.material.depth_write) {
                 continue;
             }
 
@@ -1280,6 +1317,8 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, shadow_diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shadow_shader_flags.data());
+            const std::array<float, 4> shadow_alpha_test = alphaTestUniformForMaterial(mesh.material);
+            bgfx::setUniform(u_lu_alpha_test_, shadow_alpha_test.data());
             bgfx::setUniform(u_lu_effect_time_, shadow_effect_time);
             bgfx::setUniform(u_lu_uv_motion1_, shadow_uv_motion1);
             uint64_t shadow_state = BGFX_STATE_WRITE_Z | BGFX_STATE_DEPTH_TEST_LESS;
@@ -1320,6 +1359,12 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             return !a_transparent;
         }
         if (!a_transparent) {
+            return false;
+        }
+        if (a->material.disable_transparent_sort != b->material.disable_transparent_sort) {
+            return !a->material.disable_transparent_sort;
+        }
+        if (a->material.disable_transparent_sort) {
             return false;
         }
 
@@ -1383,6 +1428,8 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
         const bool has_texture = mesh.material.lu_shader_uses_texture;
         const std::array<float, 4> shader_flags = shaderFlagsForMaterial(mesh.material);
         bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
+        const std::array<float, 4> alpha_test = alphaTestUniformForMaterial(mesh.material);
+        bgfx::setUniform(u_lu_alpha_test_, alpha_test.data());
         float variant_flags[4] = {
             static_cast<float>(mesh.material.legopp_variant),
             usesLowLegoppSource(mesh.material) ? 1.0f : 0.0f,
@@ -1494,10 +1541,13 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
+            bgfx::setUniform(u_lu_alpha_test_, alpha_test.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
             bgfx::setUniform(u_lu_uv_motion1_, uv_motion1);
-            uint64_t normal_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-                                    BGFX_STATE_DEPTH_TEST_LESS;
+            uint64_t normal_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z;
+            if (mesh.material.depth_test) {
+                normal_state |= depthTestState(mesh.material.depth_test_function);
+            }
             if (mesh.material.cull_mode == RenderCullMode::Clockwise) {
                 normal_state |= BGFX_STATE_CULL_CW;
             } else if (mesh.material.cull_mode == RenderCullMode::Backface ||
@@ -1508,8 +1558,10 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::submit(kViewSceneNormal, view_normal_program_);
         }
 
-        uint64_t mask_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z |
-                              BGFX_STATE_DEPTH_TEST_LESS;
+        uint64_t mask_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_WRITE_Z;
+        if (mesh.material.depth_test) {
+            mask_state |= depthTestState(mesh.material.depth_test_function);
+        }
         if (mesh.material.cull_mode == RenderCullMode::Clockwise) {
             mask_state |= BGFX_STATE_CULL_CW;
         } else if (mesh.material.cull_mode == RenderCullMode::Backface ||
@@ -1525,6 +1577,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
+            bgfx::setUniform(u_lu_alpha_test_, alpha_test.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
             bgfx::setUniform(u_lu_uv_motion1_, uv_motion1);
             const float reflection_mask_value[4] = {
@@ -1548,6 +1601,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             bgfx::setTexture(0, s_diffuse_, mesh.texture, mesh.texture_sampler_flags);
             bgfx::setUniform(u_material_diffuse_, diffuse);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
+            bgfx::setUniform(u_lu_alpha_test_, alpha_test.data());
             bgfx::setUniform(u_lu_effect_time_, effect_time_uniform);
             bgfx::setUniform(u_lu_uv_motion1_, uv_motion1);
             const float bloom_mask_value[4] = {
@@ -1610,6 +1664,8 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
     for (size_t i = 0; i < debug_count; ++i) {
         const auto& mesh = meshes_[i];
         const auto& material = mesh.material;
+        const CurrentRenderStateDiagnostic submitted_state =
+            currentRenderStateDiagnostic(material);
         std::string name = shortText(mesh.name.empty() ? std::string{"<unnamed>"} : mesh.name, 18);
         const std::string label = shortText(material.lu_shader_label.empty() ? std::string{"<unknown>"} : material.lu_shader_label, 20);
         const char* texture_text = material.diffuse_texture_path.empty() ? "no" : "yes";
@@ -1625,7 +1681,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             0,
             static_cast<uint16_t>(5 + i),
             material.lu_shader_resolved ? 0x0f : 0x0e,
-            "%s | %s(%d/%d) | %s/%s/%s | %s | %s %s/%d | %s/%s t%d b%d z%d | %s/%s | %d/%d | %s | %d/%d/%d/%d/%d | %s | u%d a%d c%d e%d k%zu | %.2f",
+            "%s | %s(%d/%d) | %s/%s/%s | %s | %s %s/%d | %s/%s t%d b%d zr%d zs%d | %s/%s | %d/%d | %s | %d/%d/%d/%d/%d | %s | u%d a%d c%d e%d k%zu | %.2f",
             name.c_str(),
             label.c_str(),
             material.lu_shader_id,
@@ -1642,6 +1698,7 @@ void BgfxRenderer::render(const OrbitCamera& camera) {
             material.alpha_test ? 1 : 0,
             material.alpha_blend ? 1 : 0,
             material.depth_write ? 1 : 0,
+            submitted_state.submitted_depth_write ? 1 : 0,
             texture_text,
             dark_texture_text,
             material.lu_shader_uses_vertex_color ? 1 : 0,
@@ -2076,6 +2133,7 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
             bgfx::setTexture(3, s_shadow_map_, white_texture_);
 
             const std::array<float, 4> shader_flags = shaderFlagsForMaterial(mesh.material);
+            const std::array<float, 4> alpha_test = alphaTestUniformForMaterial(mesh.material);
             float variant_flags[4] = {
                 static_cast<float>(mesh.material.legopp_variant),
                 usesLowLegoppSource(mesh.material) ? 1.0f : 0.0f,
@@ -2140,6 +2198,7 @@ void BgfxRenderer::captureGlobalReflectionProbe(float effect_time) {
             bgfx::setUniform(u_lu_fog_color_, fog_color);
             bgfx::setUniform(u_lu_fog_params_, fog_params);
             bgfx::setUniform(u_lu_shader_flags_, shader_flags.data());
+            bgfx::setUniform(u_lu_alpha_test_, alpha_test.data());
             bgfx::setUniform(u_lu_variant_flags_, variant_flags);
             bgfx::setUniform(u_lu_pbr_params_, pbr_params);
             bgfx::setUniform(u_lu_reflection_params_, reflection_params);
@@ -2205,8 +2264,12 @@ bgfx::ProgramHandle BgfxRenderer::programForMaterial(const MaterialAsset& materi
 }
 
 uint64_t BgfxRenderer::renderStateForMaterial(const MaterialAsset& material) const {
-    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS;
-    if (!isTransparentForwardMaterial(material) && material.depth_write) {
+    uint64_t state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A;
+    if (material.depth_test) {
+        state |= depthTestState(material.depth_test_function);
+    }
+    const CurrentRenderStateDiagnostic diagnostic = currentRenderStateDiagnostic(material);
+    if (diagnostic.submitted_depth_write) {
         state |= BGFX_STATE_WRITE_Z;
     }
 
@@ -2225,10 +2288,12 @@ uint64_t BgfxRenderer::renderStateForMaterial(const MaterialAsset& material) con
         state |= BGFX_STATE_CULL_CCW;
     }
 
-    if (material.alpha_mode == RenderAlphaMode::Additive) {
+    if (diagnostic.submitted_additive_blend) {
         state |= BGFX_STATE_BLEND_ADD;
-    } else if (material.alpha_blend || material.alpha_mode == RenderAlphaMode::AlphaBlend) {
-        state |= BGFX_STATE_BLEND_ALPHA;
+    } else if (diagnostic.submitted_alpha_blend) {
+        state |= BGFX_STATE_BLEND_FUNC(
+            blendFactorState(material.source_blend),
+            blendFactorState(material.destination_blend));
     }
 
     return state;
@@ -3114,6 +3179,8 @@ void BgfxRenderer::drawGrid() {
     bgfx::setUniform(u_light_dir_ambient_, light_ambient);
     bgfx::setUniform(u_light_color_, light_color);
     bgfx::setUniform(u_lu_shader_flags_, shader_flags);
+    const float alpha_test[4] = {0.0f, 0.0f, 0.0f, 0.0f};
+    bgfx::setUniform(u_lu_alpha_test_, alpha_test);
     uint64_t grid_state = BGFX_STATE_WRITE_RGB | BGFX_STATE_WRITE_A | BGFX_STATE_DEPTH_TEST_LESS |
                           BGFX_STATE_PT_LINES | BGFX_STATE_BLEND_ALPHA;
     if (features_.msaa.enabled) {

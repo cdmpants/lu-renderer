@@ -1,6 +1,7 @@
 $input v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos
 
 #include <bgfx_shader.sh>
+#include "alpha_test.sh"
 
 SAMPLER2D(s_diffuse, 0);
 
@@ -29,7 +30,7 @@ void main()
     vec4 tex = texture2D(s_diffuse, v_texcoord0);
     vec3 lit = vec3_splat(u_lightDirAmbient.w) + u_lightColor.rgb * ndotl;
     vec4 color = tex * u_materialDiffuse * v_color0;
-    if (u_luShaderFlags.w >= 0.0 && color.a < u_luShaderFlags.w) {
+    if (!luAlphaTestPass(color.a)) {
         discard;
     }
     vec3 rgb = color.rgb * lit * shadowVisibilityWithNormal(v_worldPos.xyz, normal);

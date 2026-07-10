@@ -391,6 +391,11 @@ LuShaderPolicy shaderPolicyFromInfo(const LuShaderInfo& shader) {
     policy.source_technique = "unknown";
     policy.port_status = ShaderPortStatus::Unported;
     policy.alpha_semantic = ShaderAlphaSemantic::Ignored;
+    // Every object technique in the recovered LU FX set opts into Gamebryo's
+    // authored render state except the small PostProcessingShaders group below.
+    // Keep this explicit on the resolved policy so alpha data semantics never
+    // have to stand in for the technique annotation.
+    policy.uses_ni_render_state = true;
 
     switch (shader.id) {
     case 0:
@@ -690,7 +695,6 @@ LuShaderPolicy shaderPolicyFromInfo(const LuShaderInfo& shader) {
         break;
     case 47:
         policy.shader_family = LegacyShaderFamily::AlphaAsAlpha;
-        policy.alpha_mode = RenderAlphaMode::AlphaTest;
         policy.cull_mode = RenderCullMode::TwoSided;
         policy.source_file = "AlphaAsAlpha.fx";
         policy.source_technique = "Technique_AlphaAsAlpha_NoLighting_VertColor_AlphaTest";
@@ -1224,6 +1228,20 @@ LuShaderPolicy shaderPolicyFromInfo(const LuShaderInfo& shader) {
         break;
     default:
         break;
+    }
+
+    if (policy.source_technique == "Technique_ImaginationCloud" ||
+        policy.source_technique == "Technique_GrayBubble_FullscreenStencilClear" ||
+        policy.source_technique == "Technique_GrayBubble_ObjectBackFacesStencil" ||
+        policy.source_technique == "Technique_GrayBubble_BackFacesGrayOut" ||
+        policy.source_technique == "Technique_GrayBubble_Ghost" ||
+        policy.source_technique == "Technique_GrayBubble_ObjectFrontFacesStencil" ||
+        policy.source_technique == "Technique_GrayBubble_FrontFacesGrayOut" ||
+        policy.source_technique == "Technique_InsideBubble_LEGO_OK" ||
+        policy.source_technique == "Technique_InsideBubble_LEGO_VertColor" ||
+        policy.source_technique == "Technique_InsideBubble_LEGO_Textured" ||
+        policy.source_technique == "Technique_InsideBubble_LEGO_VertColorTextured") {
+        policy.uses_ni_render_state = false;
     }
 
     return policy;

@@ -537,15 +537,79 @@ std::string legoppFlavoredTechnique(
     }
 }
 
-bool shaderAllowsAuthoredAlpha(RenderAlphaMode alpha_mode, ShaderAlphaSemantic semantic) {
-    if (alpha_mode == RenderAlphaMode::AlphaBlend ||
-        alpha_mode == RenderAlphaMode::AlphaTest ||
-        alpha_mode == RenderAlphaMode::Additive) {
-        return true;
-    }
-    return semantic == ShaderAlphaSemantic::OutputAlpha ||
-           semantic == ShaderAlphaSemantic::AlphaTest ||
-           semantic == ShaderAlphaSemantic::Unknown;
+NifPropertySource importPropertySource(const lu::assets::NifRenderPropertySource& source) {
+    return {
+        source.present,
+        source.property_block,
+        source.owner_node_block,
+        source.inheritance_depth,
+        source.duplicates_on_owner
+    };
+}
+
+NifPropertySources importPropertySources(const lu::assets::NifRenderPropertySources& sources) {
+    NifPropertySources out;
+    out.material = importPropertySource(sources.material);
+    out.texturing = importPropertySource(sources.texturing);
+    out.alpha = importPropertySource(sources.alpha);
+    out.vertex_color = importPropertySource(sources.vertex_color);
+    out.z_buffer = importPropertySource(sources.z_buffer);
+    out.specular = importPropertySource(sources.specular);
+    out.shade = importPropertySource(sources.shade);
+    out.stencil = importPropertySource(sources.stencil);
+    return out;
+}
+
+NifAlphaState decodeAlphaState(bool present, uint16_t flags, uint8_t threshold) {
+    NifAlphaState out;
+    out.present = present;
+    out.raw_flags = flags;
+    out.threshold = threshold;
+    out.blend_enabled = present && (flags & 0x0001u) != 0;
+    out.source_blend = static_cast<uint8_t>((flags >> 1u) & 0x000Fu);
+    out.destination_blend = static_cast<uint8_t>((flags >> 5u) & 0x000Fu);
+    out.test_enabled = present && (flags & 0x0200u) != 0;
+    out.test_function = static_cast<uint8_t>((flags >> 10u) & 0x0007u);
+    out.no_sorter = present && (flags & 0x2000u) != 0;
+    return out;
+}
+
+NifAuthoredRenderState importAuthoredState(const lu::assets::NifRenderAuthoredState& source) {
+    NifAuthoredRenderState out;
+    out.sources = importPropertySources(source.sources);
+    out.alpha = decodeAlphaState(
+        source.has_alpha, source.alpha_flags, source.alpha_threshold);
+    out.z_buffer.present = source.has_z_buffer;
+    out.z_buffer.raw_flags = source.z_buffer_flags;
+    out.z_buffer.test_enabled = source.has_z_buffer && (source.z_buffer_flags & 0x0001u) != 0;
+    out.z_buffer.write_enabled = source.has_z_buffer && (source.z_buffer_flags & 0x0002u) != 0;
+    out.z_buffer.test_function = static_cast<uint8_t>((source.z_buffer_flags >> 2u) & 0x0007u);
+    out.vertex_color.present = source.has_vertex_color;
+    out.vertex_color.raw_flags = source.vertex_color_flags;
+    out.vertex_color.color_mode = static_cast<uint8_t>(source.vertex_color_flags & 0x0007u);
+    out.vertex_color.lighting_mode = static_cast<uint8_t>((source.vertex_color_flags >> 3u) & 0x0001u);
+    out.vertex_color.source_vertex_mode = static_cast<uint8_t>((source.vertex_color_flags >> 4u) & 0x0003u);
+    out.has_specular = source.has_specular;
+    out.specular_flags = source.specular_flags;
+    out.specular_enabled = source.has_specular && (source.specular_flags & 0x0001u) != 0;
+    out.has_shade = source.has_shade;
+    out.shade_flags = source.shade_flags;
+    out.smooth_shading = !source.has_shade || (source.shade_flags & 0x0001u) != 0;
+    out.stencil.present = source.has_stencil;
+    out.stencil.raw_flags = source.stencil_flags;
+    out.stencil.enabled = source.has_stencil && (source.stencil_flags & 0x0001u) != 0;
+    out.stencil.fail_action = static_cast<uint8_t>((source.stencil_flags >> 1u) & 0x0007u);
+    out.stencil.z_fail_action = static_cast<uint8_t>((source.stencil_flags >> 4u) & 0x0007u);
+    out.stencil.pass_action = static_cast<uint8_t>((source.stencil_flags >> 7u) & 0x0007u);
+    out.stencil.draw_mode = static_cast<uint8_t>((source.stencil_flags >> 10u) & 0x0003u);
+    out.stencil.test_function = static_cast<uint8_t>((source.stencil_flags >> 12u) & 0x0007u);
+    out.stencil.reference = source.stencil_ref;
+    out.stencil.mask = source.stencil_mask;
+    out.has_sort_adjust = source.has_sort_adjust;
+    out.sort_adjust_node_block = source.sort_adjust_node_block;
+    out.sort_adjust_inheritance_depth = source.sort_adjust_inheritance_depth;
+    out.sorting_mode = source.sorting_mode;
+    return out;
 }
 
 void applyLegoppGeometryVariant(MaterialAsset& material, bool has_vertex_colors, bool has_texture, bool is_skinned) {
@@ -677,6 +741,78 @@ void applyMetallicGeometryVariant(MaterialAsset& material, bool has_vertex_color
 
 } // namespace
 
+void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy& policy) {
+    const NifAlphaState& nif_alpha = material.nif_resolved_state.alpha;
+    const NifZBufferState& nif_z = material.nif_resolved_state.z_buffer;
+    const bool use_nif_state = policy.uses_ni_render_state;
+
+    material.lu_shader_uses_ni_render_state = use_nif_state;
+    material.alpha_mode = policy.alpha_mode;
+    material.depth_write = policy.depth_write;
+    material.depth_test = true;
+    material.depth_test_function = 1;
+    material.source_blend = 6;
+    material.destination_blend = 7;
+    material.alpha_test_function = 6;
+    material.disable_transparent_sort = false;
+
+    const bool technique_blend =
+        policy.force_alpha_blend ||
+        material.alpha_mode == RenderAlphaMode::AlphaBlend ||
+        material.alpha_mode == RenderAlphaMode::Additive;
+    const bool technique_alpha_test =
+        policy.force_alpha_test ||
+        material.alpha_mode == RenderAlphaMode::AlphaTest;
+    material.alpha_blend =
+        technique_blend ||
+        (use_nif_state && nif_alpha.present && nif_alpha.blend_enabled);
+    material.alpha_test =
+        technique_alpha_test ||
+        (use_nif_state && nif_alpha.present && nif_alpha.test_enabled);
+
+    if (use_nif_state && nif_alpha.present) {
+        if (!technique_blend) {
+            material.source_blend = nif_alpha.source_blend;
+            material.destination_blend = nif_alpha.destination_blend;
+        }
+        if (!technique_alpha_test) {
+            material.alpha_test_function = nif_alpha.test_function;
+        }
+        material.disable_transparent_sort = nif_alpha.no_sorter;
+    }
+    if (use_nif_state && nif_z.present) {
+        material.depth_test = nif_z.test_enabled;
+        material.depth_write = policy.depth_write && nif_z.write_enabled;
+        material.depth_test_function = nif_z.test_function;
+    }
+    if (use_nif_state && material.nif_resolved_state.has_sort_adjust &&
+        material.nif_resolved_state.sorting_mode == 1u) {
+        material.disable_transparent_sort = true;
+    }
+
+    if (material.alpha_mode == RenderAlphaMode::Opaque) {
+        if (material.alpha_blend) {
+            material.alpha_mode = RenderAlphaMode::AlphaBlend;
+        } else if (material.alpha_test) {
+            material.alpha_mode = RenderAlphaMode::AlphaTest;
+        }
+    }
+    material.has_alpha_property = nif_alpha.present;
+    material.alpha_flags = nif_alpha.raw_flags;
+    material.alpha_threshold = technique_alpha_test
+        ? policy.alpha_threshold
+        : nif_alpha.threshold;
+
+    if (isLegoppFrontendAlphaTestTechnique(material.lu_shader_source_technique)) {
+        material.alpha_mode = RenderAlphaMode::AlphaTest;
+        material.alpha_blend = false;
+        material.alpha_test = true;
+        material.alpha_threshold = 127;
+        material.alpha_test_function = 6;
+        material.lu_shader_alpha_semantic = ShaderAlphaSemantic::AlphaTest;
+    }
+}
+
 NifImportResult importNif(const NifImportOptions& options) {
     NifImportResult result;
 
@@ -712,6 +848,18 @@ NifImportResult importNif(const NifImportOptions& options) {
 
             MeshAsset out;
             out.name = mesh.name;
+            out.source_mesh_block = mesh.source_mesh_block;
+            out.source_node_block = mesh.source_node_block;
+            out.parent_cycle_detected = mesh.parent_cycle_detected;
+            out.multiple_parents_detected = mesh.multiple_parents_detected;
+            out.source_node_chain.reserve(mesh.source_node_chain.size());
+            for (const auto& source_node : mesh.source_node_chain) {
+                out.source_node_chain.push_back({
+                    source_node.block_index,
+                    source_node.name,
+                    source_node.type_name
+                });
+            }
             out.vertices.reserve(mesh.vertices.size());
             out.indices = mesh.indices;
             out.has_lod_range = mesh.has_lod_range;
@@ -742,6 +890,8 @@ NifImportResult importNif(const NifImportOptions& options) {
             out.material.lu_shader_validation_status_note = resolved_shader.policy.validation_status_note;
             out.material.lu_shader_port_status = resolved_shader.policy.port_status;
             out.material.lu_shader_alpha_semantic = resolved_shader.policy.alpha_semantic;
+            out.material.lu_shader_uses_ni_render_state =
+                resolved_shader.policy.uses_ni_render_state;
             out.material.lu_shader_resolved = resolved_shader.resolved;
             out.material.lu_shader_asset_is_multishader = resolved_shader.asset_is_multishader;
             out.material.lu_multishader_prefix_id = resolved_shader.multishader_prefix_id.value_or(-1);
@@ -759,6 +909,27 @@ NifImportResult importNif(const NifImportOptions& options) {
             out.material.lu_shader_uses_uv_animation = resolved_shader.policy.uses_uv_animation;
             out.material.lu_shader_uses_alpha_animation = resolved_shader.policy.uses_alpha_animation;
             out.material.nif_has_material_color_controller = nif_has_material_color_controller;
+            out.material.nif_diffuse_texture_has_alpha_format =
+                mesh.material.diffuse_texture_has_alpha_format;
+            out.material.nif_diffuse_texture_alpha_format =
+                mesh.material.diffuse_texture_alpha_format;
+            out.material.nif_direct_property_sources =
+                importPropertySources(mesh.material.direct_property_sources);
+            out.material.nif_resolved_state =
+                importAuthoredState(mesh.material.resolved_state);
+            if (mesh.has_vertex_colors && !mesh.vertices.empty()) {
+                out.material.nif_vertex_alpha_min = mesh.vertices.front().color[3];
+                out.material.nif_vertex_alpha_max = mesh.vertices.front().color[3];
+                for (const auto& vertex : mesh.vertices) {
+                    out.material.nif_vertex_alpha_min = std::min(
+                        out.material.nif_vertex_alpha_min, vertex.color[3]);
+                    out.material.nif_vertex_alpha_max = std::max(
+                        out.material.nif_vertex_alpha_max, vertex.color[3]);
+                    if (vertex.color[3] < 0.999f) {
+                        ++out.material.nif_vertex_alpha_non_opaque_count;
+                    }
+                }
+            }
             auto controller_it = emissive_controllers.find(mesh.source_node_block);
             if (controller_it != emissive_controllers.end()) {
                 const MaterialEmissiveController& controller = controller_it->second;
@@ -864,42 +1035,11 @@ NifImportResult importNif(const NifImportOptions& options) {
                 !out.material.diffuse_texture_path.empty(),
                 mesh.is_skinned);
 
-            const bool authored_alpha_can_blend =
-                shaderAllowsAuthoredAlpha(out.material.alpha_mode, out.material.lu_shader_alpha_semantic);
-            const bool material_alpha_source = mesh.material.diffuse[3] < 0.999f;
-            out.material.alpha_blend =
-                resolved_shader.policy.force_alpha_blend ||
-                out.material.alpha_mode == RenderAlphaMode::AlphaBlend ||
-                out.material.alpha_mode == RenderAlphaMode::Additive ||
-                (authored_alpha_can_blend && material_alpha_source) ||
-                (mesh.material.has_alpha_property &&
-                 (mesh.material.alpha_flags & 0x0001u) != 0 &&
-                 authored_alpha_can_blend);
-            out.material.alpha_test =
-                resolved_shader.policy.force_alpha_test ||
-                out.material.alpha_mode == RenderAlphaMode::AlphaTest ||
-                (authored_alpha_can_blend &&
-                 mesh.material.has_alpha_property &&
-                 mesh.material.alpha_threshold > 0);
-            if (out.material.alpha_mode == RenderAlphaMode::Opaque) {
-                if (out.material.alpha_blend) {
-                    out.material.alpha_mode = RenderAlphaMode::AlphaBlend;
-                } else if (out.material.alpha_test) {
-                    out.material.alpha_mode = RenderAlphaMode::AlphaTest;
-                }
-            }
-            out.material.has_alpha_property = mesh.material.has_alpha_property;
-            out.material.alpha_flags = mesh.material.alpha_flags;
-            out.material.alpha_threshold = resolved_shader.policy.alpha_threshold > 0
-                ? resolved_shader.policy.alpha_threshold
-                : mesh.material.alpha_threshold;
-            if (isLegoppFrontendAlphaTestTechnique(out.material.lu_shader_source_technique)) {
-                out.material.alpha_mode = RenderAlphaMode::AlphaTest;
-                out.material.alpha_blend = false;
-                out.material.alpha_test = true;
-                out.material.alpha_threshold = 127;
-                out.material.lu_shader_alpha_semantic = ShaderAlphaSemantic::AlphaTest;
-            }
+            // Alpha values are shader inputs, not render-state evidence. Only the
+            // selected technique or an enabled NiAlphaProperty may turn blending
+            // or testing on. In particular, control-emissive vertex alpha remains
+            // compatible with an explicitly authored blend state.
+            applyEffectiveNifRenderState(out.material, resolved_shader.policy);
 
             for (size_t vertex_index = 0; vertex_index < mesh.vertices.size(); ++vertex_index) {
                 const auto& v = mesh.vertices[vertex_index];

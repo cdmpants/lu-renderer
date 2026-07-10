@@ -1,6 +1,7 @@
 $input v_normal, v_texcoord0, v_texcoord1, v_color0, v_worldPos, v_reflectVector, v_vdn, v_diffuse, v_specular, v_vertPos, v_diffuseExtra
 
 #include <bgfx_shader.sh>
+#include "alpha_test.sh"
 
 SAMPLER2D(s_diffuse, 0);
 SAMPLERCUBE(s_luEnv, 1);
@@ -299,7 +300,7 @@ void main()
         result = applyShinyGlint(result, v_vertPos);
     }
 
-    if (u_luShaderFlags.w >= 0.0 && result.a < u_luShaderFlags.w) {
+    if (!luAlphaTestPass(result.a)) {
         discard;
     }
 

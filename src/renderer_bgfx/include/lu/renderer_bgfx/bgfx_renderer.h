@@ -198,6 +198,7 @@ private:
     bgfx::UniformHandle u_lu_fog_color_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_fog_params_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_shader_flags_ = BGFX_INVALID_HANDLE;
+    bgfx::UniformHandle u_lu_alpha_test_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_variant_flags_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_pbr_params_ = BGFX_INVALID_HANDLE;
     bgfx::UniformHandle u_lu_reflection_params_ = BGFX_INVALID_HANDLE;

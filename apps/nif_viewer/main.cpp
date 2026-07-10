@@ -538,6 +538,7 @@ void printShaderDiagnostics(const RenderWorld& world) {
     for (size_t i = 0; i < count; ++i) {
         const auto& mesh = world.meshes[i];
         const auto& material = mesh.material;
+        const auto submitted_state = lu::renderer::currentRenderStateDiagnostic(material);
         std::cout
             << "  [" << i << "] " << mesh.name
             << " shader=" << material.lu_shader_id
@@ -578,8 +579,27 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " alphaSemantic=" << alphaSemanticName(material.lu_shader_alpha_semantic)
             << " test=" << boolText(material.alpha_test)
             << " blend=" << boolText(material.alpha_blend)
+            << " usesNi=" << boolText(material.lu_shader_uses_ni_render_state)
+            << " blendFunc=" << static_cast<int>(material.source_blend) << "/"
+            << static_cast<int>(material.destination_blend)
+            << " alphaFunc=" << static_cast<int>(material.alpha_test_function)
             << " zwrite=" << boolText(material.depth_write)
+            << " ztest=" << boolText(material.depth_test)
+            << ":" << static_cast<int>(material.depth_test_function)
+            << " submittedZ=" << boolText(submitted_state.submitted_depth_write)
+            << " noSort=" << boolText(material.disable_transparent_sort)
             << " cull=" << cullModeName(material.cull_mode)
+            << " nifAlpha=" << material.nif_resolved_state.alpha.raw_flags
+            << ":blend" << boolText(material.nif_resolved_state.alpha.blend_enabled)
+            << ":test" << boolText(material.nif_resolved_state.alpha.test_enabled)
+            << " nifZ=" << material.nif_resolved_state.z_buffer.raw_flags
+            << ":test" << boolText(material.nif_resolved_state.z_buffer.test_enabled)
+            << ":write" << boolText(material.nif_resolved_state.z_buffer.write_enabled)
+            << " nifVC=" << material.nif_resolved_state.vertex_color.raw_flags
+            << ":source" << static_cast<int>(material.nif_resolved_state.vertex_color.source_vertex_mode)
+            << ":light" << static_cast<int>(material.nif_resolved_state.vertex_color.lighting_mode)
+            << " nifSpec=" << boolText(material.nif_resolved_state.specular_enabled)
+            << " nifSort=" << material.nif_resolved_state.sorting_mode
             << " emissive=" << std::max({material.emissive.x, material.emissive.y, material.emissive.z})
             << " diffuse=" << material.diffuse.x << "/" << material.diffuse.y << "/"
             << material.diffuse.z << "/" << material.diffuse.w

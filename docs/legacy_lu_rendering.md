@@ -72,14 +72,61 @@ control regions.
 When adding a shader policy, record the exact source file, technique, RGB
 inputs, alpha meaning, blend/test state, depth-write state, culling, and
 texture/sampler roles in `LuShaderPolicy` and add a real-asset regression case.
-Do not infer blending solely from the presence of vertex alpha, texture alpha,
-or `NiAlphaProperty`.
+Do not infer blending solely from vertex alpha, texture alpha, diffuse alpha,
+or the mere presence of an `NiAlphaProperty` block. Decode its enable bits and
+factors, then resolve them against the selected technique's render-state
+contract. A control-alpha technique does not suppress an explicitly enabled
+NiAlpha blend state: shader-data meaning and framebuffer state are independent.
+
+## NIF Render-State Evidence
+
+LU's Gamebryo properties are independent authored state, not one generic
+"transparent" switch. Preserve the raw property, its decoded fields, and the
+node that supplied it before deriving GPU state.
+
+- `NiAlphaProperty`: blend enable, source/destination factors, alpha-test
+  enable/function/reference, and no-sort.
+- `NiZBufferProperty`: depth-test enable, depth-write enable, and comparison.
+- `NiVertexColorProperty`: source vertex mode and lighting mode.
+- `NiSpecularProperty` and `NiShadeProperty`: specular enable and shade mode.
+- `NiStencilProperty`: stencil state plus face draw mode.
+- `NiSortAdjustNode`: subtree sorting inheritance/off state.
+
+Resolve property candidates from the geometry node toward the root, with the
+nearest property of each type winning. Keep provenance and cycle/multiple-parent
+diagnostics. When the selected FX technique declares `UsesNiRenderState=true`,
+the importer applies inherited NiAlpha and NiZ state exactly. Techniques such as
+`Technique_ImaginationCloud` declare `UsesNiRenderState=false`; their policy
+state wins and the NIF candidates remain diagnostic only.
+
+Blend enable and depth writes are independent. A blended draw can write depth,
+and the bgfx backend must not silently remove `WRITE_Z`. NiAlpha source and
+destination factors map individually, all eight comparison functions are
+supported, reference zero remains valid, and the no-sort bit plus inherited
+`NiSortAdjustNode` sorting-off mode are honored.
+
+`lu_shader_audit --per-mesh` reports the node path, property provenance, decoded
+state, vertex-alpha range, texture alpha-format hint, requested state, and the
+state the current backend actually submits.
+
+Current real-asset evidence:
+
+- Spaceranger armor inherits `NiZBufferProperty` flags 15 from the root:
+  depth test and writes enabled with less-equal comparison. It directly carries
+  `NiSpecularProperty` flags 0 and `NiAlphaProperty` flags 237.
+- The corn cob also inherits Z-buffer flags 15, but
+  `Technique_ImaginationCloud` declares `UsesNiRenderState=false` and explicitly
+  disables Z writes, so the technique overrides that inherited candidate.
+- Airport clear lights have blend flags 237 and no explicit Z-buffer property.
+  They therefore use source-alpha/inverse-source-alpha blending and retain the
+  technique's default depth write instead of losing it to a transparency
+  classification.
 
 ## Known Real-Asset Contracts
 
 | Asset | Evidence and expected result |
 | --- | --- |
-| `mesh/factionkit2/minifig_accessory_spacerangerkit3_armor.nif` | CDClient shader 19 (`LEGO-SuperEmissive`) is authoritative; `ArmorShade:FXshader_Armor` is diagnostic noise; `Technique_LEGOPPLightingVertColor_SuperEmissive`; opaque/depth-writing; vertex alpha controls emissive intensity. |
+| `mesh/factionkit2/minifig_accessory_spacerangerkit3_armor.nif` | CDClient shader 19 (`LEGO-SuperEmissive`) is authoritative; `ArmorShade:FXshader_Armor` is diagnostic noise; `Technique_LEGOPPLightingVertColor_SuperEmissive`; authored alpha blending and depth writes coexist; vertex alpha controls emissive intensity while output/fade alpha controls framebuffer blending. |
 | `mesh/pets/ptmg_corn_cob.nif` | CDClient shader 82 (`Pet Taming LEGO In Cloud`) is authoritative; `NiMultiShader1` does not override it; `Technique_ImaginationCloud`; unlit alpha blend with no depth write. |
 
 ## Milestone 1 Lighting

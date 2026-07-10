@@ -24,6 +24,7 @@ struct LuShaderPolicy {
     RenderAlphaMode alpha_mode = RenderAlphaMode::Opaque;
     RenderCullMode cull_mode = RenderCullMode::Backface;
     bool depth_write = true;
+    bool uses_ni_render_state = true;
     bool force_alpha_blend = false;
     bool force_alpha_test = false;
     uint8_t alpha_threshold = 0;

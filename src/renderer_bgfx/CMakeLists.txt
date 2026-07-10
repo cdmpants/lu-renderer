@@ -2,6 +2,7 @@ set(LU_RENDERER_SHADER_OUTPUT_DIR "${CMAKE_BINARY_DIR}/runtime/shaders")
 set(LU_RENDERER_SHADER_DIR "${CMAKE_SOURCE_DIR}/shaders/legacy_lu")
 set(LU_RENDERER_FRAGMENT_SHADER_INCLUDES
     "${LU_RENDERER_SHADER_DIR}/shadow_common.sh"
+    "${LU_RENDERER_SHADER_DIR}/alpha_test.sh"
 )
 
 bgfx_compile_shaders(

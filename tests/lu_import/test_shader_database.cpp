@@ -1,4 +1,5 @@
 #include "lu/renderer/lu_import/lvl_environment_importer.h"
+#include "lu/renderer/lu_import/nif_importer.h"
 #include "lu/renderer/lu_import/shader_database.h"
 
 #include <cstdlib>
@@ -419,6 +420,7 @@ int main() {
     expect(lego_policy.shader_family == LegacyShaderFamily::LegoppLighting, "LEGO uses LEGOPP lighting program");
     expect(lego_policy.alpha_mode == RenderAlphaMode::Opaque, "LEGO defaults opaque");
     expect(lego_policy.depth_write, "LEGO keeps depth writes enabled for NiAlphaProperty render state");
+    expect(lego_policy.uses_ni_render_state, "LEGO technique consumes Ni render state");
     expect(lego_policy.source_file == "LEGOPPLighting.fx", "LEGO source file");
     expect(lego_policy.uses_material_diffuse, "LEGO uses material diffuse as brick color");
     expect(lego_policy.uses_reflection, "LEGO uses env reflection");
@@ -432,6 +434,7 @@ int main() {
     expect(lego_super_policy.legopp_variant == LegoppShaderVariant::SuperEmissive, "LEGO SuperEmissive variant");
     expect(lego_super_policy.source_technique == "Technique_LEGOPPLightingOK_SuperEmissive", "LEGO SuperEmissive source technique");
     expect(lego_super_policy.alpha_semantic == ShaderAlphaSemantic::ControlEmissive, "LEGO SuperEmissive alpha is emissive control data");
+    expect(lego_super_policy.uses_ni_render_state, "LEGO SuperEmissive technique consumes Ni render state");
     expect(lego_super_policy.uses_uv_animation, "LEGO SuperEmissive uses AnimUV vertex shader");
     expect(lego_super_policy.port_status == ShaderPortStatus::Verified, "LEGO SuperEmissive verified");
 
@@ -648,7 +651,8 @@ int main() {
     LuShaderInfo alpha_test{47, 54, "VertColorTex_NoLight_AlphaTest"};
     LuShaderPolicy alpha_test_policy = shaderPolicyFromInfo(alpha_test);
     expect(alpha_test_policy.shader_family == LegacyShaderFamily::AlphaAsAlpha, "AlphaTest uses AlphaAsAlpha program");
-    expect(alpha_test_policy.alpha_mode == RenderAlphaMode::AlphaTest, "AlphaTest shader policy");
+    expect(alpha_test_policy.alpha_mode == RenderAlphaMode::Opaque,
+        "AlphaTest-labelled technique leaves test enable to NiAlphaProperty");
     expect(alpha_test_policy.depth_write, "AlphaTest keeps depth writes enabled");
     expect(alpha_test_policy.source_technique == "Technique_AlphaAsAlpha_NoLighting_VertColor_AlphaTest", "AlphaTest source technique");
     expect(!alpha_test_policy.uses_fog, "AlphaTest has no source fog path");
@@ -1029,6 +1033,8 @@ int main() {
     expect(!pet_cloud_policy.depth_write, "Pet cloud source disables depth writes");
     expect(pet_cloud_policy.source_file == "PostProcessingShaders.fx", "Pet cloud source file");
     expect(pet_cloud_policy.source_technique == "Technique_ImaginationCloud", "Pet cloud source technique");
+    expect(!pet_cloud_policy.uses_ni_render_state,
+        "Pet cloud technique ignores inherited Ni render state per FX annotation");
     expect(pet_cloud_policy.uses_vertex_color, "Pet cloud source Basic_VS uses vertex color");
     expect(!pet_cloud_policy.uses_lighting, "Pet cloud source Basic_VS is unlit");
     expect(!pet_cloud_policy.uses_fog, "Pet cloud source has no fog");
@@ -1142,6 +1148,72 @@ int main() {
     expect(ocean_distort_unlit_policy.uses_uv_animation, "Ocean unlit distortion uses UV animation");
     expect(ocean_distort_unlit_policy.uses_alpha_animation, "Ocean unlit distortion uses fade alpha");
     expect(ocean_distort_unlit_policy.port_status == ShaderPortStatus::Verified, "Ocean unlit distortion verified");
+
+    MaterialAsset authored_state_material;
+    authored_state_material.diffuse.w = 0.25f;
+    authored_state_material.nif_resolved_state.alpha.present = true;
+    authored_state_material.nif_resolved_state.alpha.raw_flags = 0x2609u;
+    authored_state_material.nif_resolved_state.alpha.blend_enabled = true;
+    authored_state_material.nif_resolved_state.alpha.source_blend = 4;
+    authored_state_material.nif_resolved_state.alpha.destination_blend = 9;
+    authored_state_material.nif_resolved_state.alpha.test_enabled = true;
+    authored_state_material.nif_resolved_state.alpha.test_function = 7;
+    authored_state_material.nif_resolved_state.alpha.threshold = 0;
+    authored_state_material.nif_resolved_state.alpha.no_sorter = true;
+    authored_state_material.nif_resolved_state.z_buffer.present = true;
+    authored_state_material.nif_resolved_state.z_buffer.test_enabled = true;
+    authored_state_material.nif_resolved_state.z_buffer.write_enabled = true;
+    authored_state_material.nif_resolved_state.z_buffer.test_function = 3;
+    LuShaderPolicy ni_state_policy;
+    ni_state_policy.uses_ni_render_state = true;
+    ni_state_policy.alpha_semantic = ShaderAlphaSemantic::ControlEmissive;
+    applyEffectiveNifRenderState(authored_state_material, ni_state_policy);
+    expect(authored_state_material.alpha_blend,
+        "explicit NiAlpha blending is honored even when alpha is emissive control data");
+    expect(authored_state_material.alpha_test && authored_state_material.alpha_threshold == 0,
+        "NiAlpha test-enable preserves a zero reference");
+    expect(authored_state_material.source_blend == 4 && authored_state_material.destination_blend == 9,
+        "NiAlpha blend factors survive effective-state resolution");
+    expect(authored_state_material.alpha_test_function == 7,
+        "NiAlpha comparison function survives effective-state resolution");
+    expect(authored_state_material.depth_write && authored_state_material.depth_test_function == 3,
+        "blended Ni state preserves depth writes and LessEqual testing");
+    expect(authored_state_material.disable_transparent_sort,
+        "NiAlpha no-sort survives effective-state resolution");
+
+    MaterialAsset ignored_ni_state_material = authored_state_material;
+    LuShaderPolicy technique_owned_policy;
+    technique_owned_policy.uses_ni_render_state = false;
+    technique_owned_policy.alpha_mode = RenderAlphaMode::AlphaBlend;
+    technique_owned_policy.depth_write = false;
+    applyEffectiveNifRenderState(ignored_ni_state_material, technique_owned_policy);
+    expect(ignored_ni_state_material.alpha_blend && !ignored_ni_state_material.depth_write,
+        "UsesNiRenderState=false keeps technique blend and depth state");
+    expect(!ignored_ni_state_material.alpha_test &&
+           ignored_ni_state_material.source_blend == 6 &&
+           ignored_ni_state_material.destination_blend == 7,
+        "UsesNiRenderState=false ignores authored NiAlpha details");
+
+    MaterialAsset alpha_value_only_material;
+    alpha_value_only_material.diffuse.w = 0.2f;
+    applyEffectiveNifRenderState(alpha_value_only_material, ni_state_policy);
+    expect(!alpha_value_only_material.alpha_blend,
+        "material alpha alone never promotes an opaque technique to blending");
+
+    MaterialAsset requested_blended_depth_write;
+    requested_blended_depth_write.alpha_mode = RenderAlphaMode::AlphaBlend;
+    requested_blended_depth_write.alpha_blend = true;
+    requested_blended_depth_write.depth_write = true;
+    const CurrentRenderStateDiagnostic current_state =
+        currentRenderStateDiagnostic(requested_blended_depth_write);
+    expect(current_state.transparent_classification,
+        "current state diagnostic classifies blended material as transparent");
+    expect(current_state.requested_depth_write,
+        "current state diagnostic preserves requested depth write");
+    expect(current_state.submitted_depth_write,
+        "blending preserves an independently requested depth write");
+    expect(current_state.submitted_alpha_blend,
+        "current state diagnostic exposes submitted alpha blending");
 
     return failures == 0 ? EXIT_SUCCESS : EXIT_FAILURE;
 }
