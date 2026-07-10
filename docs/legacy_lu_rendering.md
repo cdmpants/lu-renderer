@@ -145,11 +145,22 @@ Current real-asset evidence:
   technique's default depth write instead of losing it to a transparency
   classification.
 
-Remaining format limitations are explicit: transparent ordering is stable
-whole-mesh bounds-center sorting rather than triangle sorting, and flat
-`NiShadeProperty` rendering would require face-normal geometry expansion. No
-flat-shaded property was found in the representative LU asset sample, so that
-geometry rewrite is not enabled without a real fixture.
+Flat `NiShadeProperty` is honored by expanding shared vertices per triangle and
+assigning the authored face normal while preserving UVs, colors, and skin
+weights. The exhaustive corpus audit found 19 flat render meshes, primarily
+sky geometry plus `cre_darkling-grumpy2.nif::grumpyMeshShape:4`; all report the
+flat state as effective after import.
+
+Transparent ordering remains stable whole-mesh bounds-center sorting rather
+than triangle sorting. The full corpus contains no inherited `NiSortAdjustNode`
+mode on renderable meshes and no observed NiAlpha no-sort bit, so expensive
+triangle sorting is not justified by the recovered LU asset state.
+
+Run `lu_shader_audit --client-root <res> --property-coverage` to reproduce the
+corpus property counts and fixture samples. The current client contains 10,534
+mesh NIF paths; 10,532 parse into 68,711 render meshes. The two exceptions are
+an unreadable/empty planetoid path and `env_won_gnar_river-plane02.nif`, whose
+header is rejected as malformed (`block type name too long`).
 
 ## Known Real-Asset Contracts
 

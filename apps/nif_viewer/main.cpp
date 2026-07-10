@@ -559,6 +559,7 @@ void printShaderDiagnostics(const RenderWorld& world) {
             << " vc=" << boolText(material.lu_shader_uses_vertex_color)
             << " meshVC=" << boolText(material.mesh_has_vertex_colors)
             << " nifVCUse=" << boolText(material.nif_vertex_colors_effective)
+            << " flat=" << boolText(material.nif_flat_shading_effective)
             << " shaderTex=" << boolText(material.lu_shader_uses_texture)
             << " matDiffuse=" << boolText(material.lu_shader_uses_material_diffuse)
             << " fog=" << boolText(material.lu_shader_uses_fog)

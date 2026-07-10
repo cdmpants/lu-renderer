@@ -324,6 +324,7 @@ struct MaterialAsset {
     int32_t lu_multishader_prefix_id = -1;
     bool mesh_has_vertex_colors = false;
     bool nif_vertex_colors_effective = false;
+    bool nif_flat_shading_effective = false;
     bool lu_shader_uses_vertex_color = false;
     bool lu_shader_uses_texture = true;
     bool lu_shader_uses_material_diffuse = false;

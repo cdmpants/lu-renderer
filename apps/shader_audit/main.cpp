@@ -1,5 +1,7 @@
 #include "lu/renderer/lu_import/nif_importer.h"
 #include "lu/renderer/lu_import/shader_database.h"
+#include "gamebryo/nif/nif_geometry.h"
+#include "gamebryo/nif/nif_reader.h"
 
 #include <algorithm>
 #include <cctype>
@@ -12,6 +14,7 @@
 #include <optional>
 #include <sstream>
 #include <set>
+#include <span>
 #include <string>
 #include <string_view>
 #include <unordered_map>
@@ -35,6 +38,7 @@ struct Args {
     bool find_shader_users = false;
     bool lego_user_coverage = false;
     bool fxshader_coverage = false;
+    bool property_coverage = false;
     bool candidate_only = false;
     bool only_unmapped_source = false;
     bool per_mesh = false;
@@ -168,6 +172,8 @@ Args parseArgs(int argc, char** argv) {
             args.lego_user_coverage = true;
         } else if (arg == "--fxshader-coverage") {
             args.fxshader_coverage = true;
+        } else if (arg == "--property-coverage") {
+            args.property_coverage = true;
         } else if (arg == "--candidate-only") {
             args.candidate_only = true;
         } else if (arg == "--only-unmapped-source") {
@@ -201,6 +207,7 @@ void printUsage() {
               << "       lu_shader_audit --client-root <res-or-client-root> --dump-assets --shader-id <id>\n"
               << "       lu_shader_audit --client-root <res-or-client-root> [--fx-root <shader-source-root>] --lego-user-coverage [--asset-filter <text>]\n"
               << "       lu_shader_audit --client-root <res-or-client-root> [--fx-root <shader-source-root>] --fxshader-coverage [--asset-filter <text>]\n"
+              << "       lu_shader_audit --client-root <res-or-client-root> --property-coverage [--asset-filter <text>]\n"
               << "       lu_shader_audit --client-root <res-or-client-root> --find-shader-users --shader-id <id> [--asset-filter <text>] [--candidate-only] [--limit <n>]\n";
 }
 
@@ -1053,6 +1060,7 @@ void printPerMeshRow(
               << " | vc=" << boolText(material.lu_shader_uses_vertex_color)
               << ",meshvc=" << boolText(material.mesh_has_vertex_colors)
               << ",nifvc=" << boolText(material.nif_vertex_colors_effective)
+              << ",flat=" << boolText(material.nif_flat_shading_effective)
               << ",tex=" << boolText(material.lu_shader_uses_texture)
               << ",mat=" << boolText(material.lu_shader_uses_material_diffuse)
               << ",fog=" << boolText(material.lu_shader_uses_fog)
@@ -1110,6 +1118,7 @@ void printPerMeshRow(
               << "/" << boolText(material.nif_resolved_state.specular_enabled)
               << ",shade=" << boolText(material.nif_resolved_state.has_shade)
               << "/" << (material.nif_resolved_state.smooth_shading ? "smooth" : "hard")
+              << "/effective=" << boolText(material.nif_flat_shading_effective)
               << " | present=" << boolText(material.nif_resolved_state.stencil.present)
               << ",raw=" << material.nif_resolved_state.stencil.raw_flags
               << ",enabled=" << boolText(material.nif_resolved_state.stencil.enabled)
@@ -1348,6 +1357,97 @@ int verifyLegoGoalAssets(const Args& args) {
     return failures == 0 ? 0 : 1;
 }
 
+int printPropertyCoverage(const Args& args) {
+    const std::filesystem::path res_root =
+        lu::renderer::lu_import::ShaderDatabase::normalizeClientRoot(args.client_root);
+    const std::filesystem::path mesh_root = res_root / "mesh";
+    std::map<uint16_t, size_t> alpha_flags;
+    std::map<uint16_t, size_t> vertex_color_flags;
+    std::map<uint16_t, size_t> z_flags;
+    std::map<uint16_t, size_t> specular_flags;
+    std::map<uint16_t, size_t> shade_flags;
+    std::map<uint16_t, size_t> stencil_flags;
+    std::map<uint32_t, size_t> sort_modes;
+    std::vector<std::string> flat_shade_samples;
+    std::vector<std::string> failure_samples;
+    size_t assets = 0;
+    size_t meshes = 0;
+    size_t failures = 0;
+
+    std::error_code ec;
+    for (std::filesystem::recursive_directory_iterator it(
+             mesh_root,
+             std::filesystem::directory_options::skip_permission_denied,
+             ec), end;
+         !ec && it != end;
+         it.increment(ec)) {
+        if (!it->is_regular_file(ec) || it->path().extension() != ".nif") continue;
+        const std::string asset =
+            lu::renderer::lu_import::ShaderDatabase::assetPathRelativeToRes(res_root, it->path());
+        if (!assetMatches(asset, args.asset_filter)) continue;
+
+        std::ifstream file(it->path(), std::ios::binary);
+        if (!file) {
+            ++failures;
+            addSample(failure_samples, asset);
+            continue;
+        }
+        std::vector<uint8_t> data{
+            std::istreambuf_iterator<char>(file),
+            std::istreambuf_iterator<char>()};
+        try {
+            auto nif = lu::assets::nif_parse(
+                std::span<const uint8_t>(data.data(), data.size()));
+            auto extracted = lu::assets::extractNifRenderGeometry(nif);
+            ++assets;
+            for (const auto& mesh : extracted.meshes) {
+                ++meshes;
+                const auto& state = mesh.material.resolved_state;
+                if (state.has_alpha) ++alpha_flags[state.alpha_flags];
+                if (state.has_vertex_color) ++vertex_color_flags[state.vertex_color_flags];
+                if (state.has_z_buffer) ++z_flags[state.z_buffer_flags];
+                if (state.has_specular) ++specular_flags[state.specular_flags];
+                if (state.has_shade) {
+                    ++shade_flags[state.shade_flags];
+                    if ((state.shade_flags & 0x0001u) == 0u && flat_shade_samples.size() < 12) {
+                        flat_shade_samples.push_back(asset + "::" + mesh.name);
+                    }
+                }
+                if (state.has_stencil) ++stencil_flags[state.stencil_flags];
+                if (state.has_sort_adjust) ++sort_modes[state.sorting_mode];
+            }
+        } catch (...) {
+            ++failures;
+            addSample(failure_samples, asset);
+        }
+    }
+
+    auto printCounts = [](const char* name, const auto& counts) {
+        std::cout << name;
+        if (counts.empty()) {
+            std::cout << " none";
+        } else {
+            for (const auto& [value, count] : counts) {
+                std::cout << " " << value << "=" << count;
+            }
+        }
+        std::cout << "\n";
+    };
+    std::cout << "Property coverage: assets=" << assets
+              << " meshes=" << meshes
+              << " failures=" << failures << "\n";
+    printCounts("alphaFlags", alpha_flags);
+    printCounts("vertexColorFlags", vertex_color_flags);
+    printCounts("zFlags", z_flags);
+    printCounts("specularFlags", specular_flags);
+    printCounts("shadeFlags", shade_flags);
+    printCounts("stencilFlags", stencil_flags);
+    printCounts("sortModes", sort_modes);
+    std::cout << "flatShadeSamples " << joinSamples(flat_shade_samples) << "\n";
+    std::cout << "failureSamples " << joinSamples(failure_samples) << "\n";
+    return failures == 0 ? 0 : 1;
+}
+
 } // namespace
 
 int main(int argc, char** argv) {
@@ -1355,6 +1455,14 @@ int main(int argc, char** argv) {
     if (args.show_help) {
         printUsage();
         return 0;
+    }
+
+    if (args.property_coverage) {
+        if (args.client_root.empty()) {
+            std::cerr << "--property-coverage requires --client-root <res-or-client-root>\n";
+            return 2;
+        }
+        return printPropertyCoverage(args);
     }
 
     if (args.dump_lego_source || args.verify_lego_source) {

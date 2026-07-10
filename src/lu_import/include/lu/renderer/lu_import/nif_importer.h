@@ -25,5 +25,6 @@ NifImportResult importNif(const NifImportOptions& options);
 // without depending on a machine-local NIF fixture.
 void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy& policy);
 bool nifVertexColorsAreEffective(const MaterialAsset& material);
+void applyEffectiveNifShade(MeshAsset& mesh);
 
 } // namespace lu::renderer::lu_import

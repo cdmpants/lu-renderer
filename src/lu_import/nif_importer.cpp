@@ -749,6 +749,38 @@ bool nifVertexColorsAreEffective(const MaterialAsset& material) {
            vertex_color.source_vertex_mode == 2u;
 }
 
+void applyEffectiveNifShade(MeshAsset& mesh) {
+    const bool flat = mesh.material.nif_resolved_state.has_shade &&
+        !mesh.material.nif_resolved_state.smooth_shading;
+    mesh.material.nif_flat_shading_effective = flat;
+    if (!flat || mesh.indices.empty() || (mesh.indices.size() % 3u) != 0u) return;
+    for (uint32_t index : mesh.indices) {
+        if (index >= mesh.vertices.size()) return;
+    }
+
+    std::vector<Vertex> vertices;
+    std::vector<uint32_t> indices;
+    vertices.reserve(mesh.indices.size());
+    indices.reserve(mesh.indices.size());
+    for (size_t i = 0; i < mesh.indices.size(); i += 3u) {
+        const Vertex& source0 = mesh.vertices[mesh.indices[i]];
+        const Vertex& source1 = mesh.vertices[mesh.indices[i + 1u]];
+        const Vertex& source2 = mesh.vertices[mesh.indices[i + 2u]];
+        const Vec3 face_normal = normalize(cross(
+            source1.position - source0.position,
+            source2.position - source0.position));
+        const Vertex* sources[3] = {&source0, &source1, &source2};
+        for (const Vertex* source : sources) {
+            Vertex vertex = *source;
+            vertex.normal = face_normal;
+            indices.push_back(static_cast<uint32_t>(vertices.size()));
+            vertices.push_back(vertex);
+        }
+    }
+    mesh.vertices = std::move(vertices);
+    mesh.indices = std::move(indices);
+}
+
 void applyEffectiveNifRenderState(MaterialAsset& material, const LuShaderPolicy& policy) {
     const NifAlphaState& nif_alpha = material.nif_resolved_state.alpha;
     const NifZBufferState& nif_z = material.nif_resolved_state.z_buffer;
@@ -1111,6 +1143,8 @@ NifImportResult importNif(const NifImportOptions& options) {
                 }
                 out.vertices.push_back(rv);
             }
+
+            applyEffectiveNifShade(out);
 
             result.world.meshes.push_back(std::move(out));
         }

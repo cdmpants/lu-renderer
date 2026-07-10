@@ -1256,6 +1256,32 @@ int main() {
            ignored_property_state.cull_mode == RenderCullMode::Backface,
         "UsesNiRenderState=false ignores NiStencil render state");
 
+    MeshAsset flat_mesh;
+    flat_mesh.material.nif_resolved_state.has_shade = true;
+    flat_mesh.material.nif_resolved_state.smooth_shading = false;
+    flat_mesh.vertices.resize(4);
+    flat_mesh.vertices[0].position = {0.0f, 0.0f, 0.0f};
+    flat_mesh.vertices[1].position = {1.0f, 0.0f, 0.0f};
+    flat_mesh.vertices[2].position = {0.0f, 1.0f, 0.0f};
+    flat_mesh.vertices[3].position = {0.0f, 0.0f, 1.0f};
+    flat_mesh.vertices[0].color_rgba8 = 0x12345678u;
+    flat_mesh.vertices[0].bone_indices[0] = 3;
+    flat_mesh.vertices[0].bone_weights[0] = 1.0f;
+    flat_mesh.indices = {0, 1, 2, 0, 2, 3};
+    applyEffectiveNifShade(flat_mesh);
+    expect(flat_mesh.material.nif_flat_shading_effective,
+        "flat NiShadeProperty is recorded as effective");
+    expect(flat_mesh.vertices.size() == 6 && flat_mesh.indices.size() == 6,
+        "flat NiShadeProperty expands shared vertices per triangle");
+    expectNear(flat_mesh.vertices[0].normal.z, 1.0f,
+        "first flat-shaded triangle receives its face normal");
+    expectNear(flat_mesh.vertices[3].normal.x, 1.0f,
+        "second flat-shaded triangle receives its distinct face normal");
+    expect(flat_mesh.vertices[3].color_rgba8 == 0x12345678u &&
+           flat_mesh.vertices[3].bone_indices[0] == 3 &&
+           flat_mesh.vertices[3].bone_weights[0] == 1.0f,
+        "flat-shading expansion preserves color and skin attributes");
+
     MaterialAsset requested_blended_depth_write;
     requested_blended_depth_write.alpha_mode = RenderAlphaMode::AlphaBlend;
     requested_blended_depth_write.alpha_blend = true;
